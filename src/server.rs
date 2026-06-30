@@ -13,6 +13,7 @@ use std::thread;
 
 use crate::assets;
 use crate::export;
+use crate::import;
 use crate::json::parse;
 use crate::model::Graph;
 
@@ -150,6 +151,7 @@ fn route(req: &Request, config: &Config) -> Response {
             let format = p.trim_start_matches("/api/export/");
             handle_export(req, format)
         }
+        ("POST", "/api/import") => handle_import(req),
         _ => Response::text("404 Not Found", "not found"),
     }
 }
@@ -212,6 +214,68 @@ fn handle_export(req: &Request, format: &str) -> Response {
         }
         Err(e) => Response::text("500 Internal Server Error", &e),
     }
+}
+
+fn handle_import(req: &Request) -> Response {
+    let body = match std::str::from_utf8(&req.body) {
+        Ok(b) => b,
+        Err(_) => return Response::text("400 Bad Request", "body is not valid UTF-8"),
+    };
+    // A `?name=` hint helps format detection but isn't required.
+    let hint = query_param(&req.path, "name").unwrap_or_default();
+    match import::import_auto(body, &hint) {
+        Ok(wire) => {
+            // Re-validate before handing it back so the UI never loads a graph
+            // the rest of the tool would reject.
+            match parse(&wire).and_then(|v| Graph::from_wire(&v)) {
+                Ok(_) => Response::json("200 OK", wire),
+                Err(e) => Response::text("400 Bad Request", &format!("imported graph is invalid: {}", e)),
+            }
+        }
+        Err(e) => Response::text("400 Bad Request", &e),
+    }
+}
+
+/// Extract and percent-decode a query parameter from a request path.
+fn query_param(path: &str, key: &str) -> Option<String> {
+    let query = path.split('?').nth(1)?;
+    for pair in query.split('&') {
+        let mut kv = pair.splitn(2, '=');
+        if kv.next() == Some(key) {
+            return Some(percent_decode(kv.next().unwrap_or("")));
+        }
+    }
+    None
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' if i + 2 < bytes.len() => {
+                let hi = (bytes[i + 1] as char).to_digit(16);
+                let lo = (bytes[i + 2] as char).to_digit(16);
+                if let (Some(hi), Some(lo)) = (hi, lo) {
+                    out.push((hi * 16 + lo) as u8);
+                    i += 3;
+                } else {
+                    out.push(bytes[i]);
+                    i += 1;
+                }
+            }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn write_response(writer: &mut TcpStream, response: Response) -> std::io::Result<()> {

@@ -595,9 +595,22 @@ function loadGraph(data) {
     labels: Array.isArray(n.labels) ? n.labels : [],
     caption: n.caption || "",
     properties: n.properties && typeof n.properties === "object" ? n.properties : {},
-    x: typeof n.x === "number" ? n.x : Math.random() * 400 + 100,
-    y: typeof n.y === "number" ? n.y : Math.random() * 300 + 100,
+    x: typeof n.x === "number" ? n.x : null,
+    y: typeof n.y === "number" ? n.y : null,
   }));
+  // Imports from JSONL / Cypher / GraphML carry no coordinates — lay those
+  // nodes out on a tidy grid so nothing overlaps.
+  const placed = state.nodes.filter((n) => n.x === null);
+  if (placed.length) {
+    const cols = Math.ceil(Math.sqrt(placed.length)) || 1;
+    const spacing = 180;
+    const ox = 140;
+    const oy = 120;
+    placed.forEach((n, i) => {
+      n.x = ox + (i % cols) * spacing;
+      n.y = oy + Math.floor(i / cols) * spacing;
+    });
+  }
   state.rels = (data.relationships || []).map((r) => ({
     id: r.id,
     type: r.type || "RELATED_TO",
@@ -736,12 +749,22 @@ fileInput.addEventListener("change", () => {
   const file = fileInput.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
-      const data = JSON.parse(reader.result);
-      loadGraph(data);
-      scheduleSave();
-      toast("Imported " + file.name, "good");
+      // The Rust backend auto-detects JSON / JSONL / Cypher / GraphML and
+      // returns an Ontoloom graph. The file name is a hint for detection.
+      const res = await fetch("/api/import?name=" + encodeURIComponent(file.name), {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: reader.result,
+      });
+      if (!res.ok) {
+        toast("Could not import: " + (await res.text()), "bad");
+      } else {
+        loadGraph(await res.json());
+        scheduleSave();
+        toast("Imported " + file.name, "good");
+      }
     } catch (e) {
       toast("Could not read that file: " + e.message, "bad");
     }

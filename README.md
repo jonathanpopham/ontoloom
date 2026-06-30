@@ -126,6 +126,18 @@ A node-link document that round-trips back into Ontoloom via **📂 Import** (it
 ### 4. GraphML (`.graphml`)
 Standard graph XML for **Gephi**, **yEd**, and `apoc.import.graphml`.
 
+## Import — anything it exports, it reads back
+
+Click **📂 Import** and pick a file. Ontoloom auto-detects the format from the
+file name and contents, so **every format above round-trips**: JSON, JSONL,
+Cypher, and GraphML all come back in as an editable graph. Node names, labels,
+relationship types, and typed properties are preserved. Imports that carry no
+layout (JSONL / Cypher / GraphML) are auto-arranged on a grid.
+
+> The Cypher reader targets the `CREATE` shape Ontoloom emits and common simple
+> variants — it is not a full Cypher query parser. JSON, JSONL, and GraphML
+> imports are general.
+
 ## How it stays dependency-free
 
 ```
@@ -135,6 +147,7 @@ src/
   json.rs      a hand-written JSON parser + serializer
   model.rs     the graph model + wire-format validation
   export.rs    the four exporters
+  import.rs    the four importers + format auto-detection
   assets.rs    include_str! of the embedded web UI
 web/
   index.html   the single-page editor shell

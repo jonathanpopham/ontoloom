@@ -1,0 +1,71 @@
+name: release
+
+# Push a version tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`) and this
+# builds a self-contained binary for each OS and attaches them to a GitHub
+# Release. Recipients just download the one file for their platform.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin       # Apple Silicon (M1/M2/M3/M4)
+          - os: macos-latest
+            target: x86_64-apple-darwin         # Intel Macs
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl   # static — runs on any Linux
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc      # Windows 10/11
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          NAME="ontoloom-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir -p dist
+          tar -C "target/${{ matrix.target }}/release" -czf "dist/${NAME}.tar.gz" ontoloom
+          (cd dist && shasum -a 256 "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256")
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          NAME="ontoloom-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir -p dist
+          (cd "target/${{ matrix.target }}/release" && 7z a "../../../dist/${NAME}.zip" ontoloom.exe)
+          (cd dist && sha256sum "${NAME}.zip" > "${NAME}.zip.sha256")
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

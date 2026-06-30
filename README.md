@@ -28,9 +28,30 @@ Design constraints, on purpose:
 - **One file.** A ~450 KB binary. Copy it, run it, done.
 - **Boring formats.** It exports the formats other tools already read, instead of inventing a new one.
 
-## Install
+## Get it
 
-You need a [Rust toolchain](https://rustup.rs/) to build (nothing else):
+### Download a prebuilt binary (no toolchain needed)
+
+Grab the single file for your OS from the [**Releases**](https://github.com/jonathanpopham/ontoloom/releases) page, then run it:
+
+| OS | File | Run it |
+|----|------|--------|
+| **Windows** | `…-x86_64-pc-windows-msvc.zip` | Unzip, double-click `ontoloom.exe` |
+| **macOS (Apple Silicon)** | `…-aarch64-apple-darwin.tar.gz` | Unpack, then `./ontoloom` |
+| **macOS (Intel)** | `…-x86_64-apple-darwin.tar.gz` | Unpack, then `./ontoloom` |
+| **Linux (any distro)** | `…-x86_64-unknown-linux-musl.tar.gz` | Unpack, `chmod +x ontoloom`, `./ontoloom` |
+
+It's a single self-contained file — nothing to install. It opens your browser to the editor and runs entirely offline.
+
+> **First-run security prompt:** because these binaries aren't code-signed, your OS may warn you the first time.
+> - **macOS:** right-click the binary → **Open** (instead of double-clicking), or run `xattr -d com.apple.quarantine ./ontoloom` once.
+> - **Windows:** on the "Windows protected your PC" dialog, click **More info → Run anyway**.
+>
+> This is expected for any unsigned open-source tool; the source is right here if you'd rather build it yourself.
+
+### Build from source
+
+You need a [Rust toolchain](https://rustup.rs/) (nothing else):
 
 ```bash
 git clone https://github.com/jonathanpopham/ontoloom

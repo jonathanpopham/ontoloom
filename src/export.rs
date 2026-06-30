@@ -1,10 +1,10 @@
 //! Exporters that turn an Ontoloom [`Graph`] into the formats people actually
 //! load into other tools.
 //!
-//! - `jsonl`   — one JSON object per line, matching the shape that Neo4j's APOC
-//!               `apoc.import.json` reads (`apoc.export.json.all` output).
-//! - `cypher`  — a runnable `CREATE` script for the Neo4j Browser / cypher-shell.
-//! - `json`    — a pretty node-link document, re-importable into Ontoloom.
+//! - `jsonl` — one JSON object per line, matching the shape Neo4j's APOC
+//!   `apoc.import.json` reads (`apoc.export.json.all` output).
+//! - `cypher` — a runnable `CREATE` script for the Neo4j Browser / cypher-shell.
+//! - `json` — a pretty node-link document, re-importable into Ontoloom.
 //! - `graphml` — GraphML XML for Gephi, yEd, and APOC's `apoc.import.graphml`.
 
 use crate::json::{obj, s, Json};

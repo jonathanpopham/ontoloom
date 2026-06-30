@@ -12,6 +12,7 @@ const PALETTE = ["#5b8def", "#7cc4a4", "#d98b6a", "#b98bd9", "#e0b15f", "#67c0d0
 
 /* ---- Application state ---- */
 const state = {
+  name: "Untitled ontology", // becomes the export file name
   nodes: [],          // {id, labels:[], caption, properties:{}, x, y}
   rels: [],           // {id, type, from, to, properties:{}}
   selection: null,    // {kind:'node'|'edge', id} or null
@@ -32,6 +33,7 @@ const inspectorForm = document.getElementById("inspector-form");
 const statusText = document.getElementById("status-text");
 const countsEl = document.getElementById("counts");
 const toastEl = document.getElementById("toast");
+const docTitleEl = document.getElementById("doc-title");
 
 /* ======================================================================
  * Utilities
@@ -571,6 +573,7 @@ function escapeHtml(s) {
  * ==================================================================== */
 function serialize() {
   return {
+    name: state.name,
     nodes: state.nodes.map((n) => ({
       id: n.id,
       labels: n.labels,
@@ -590,6 +593,9 @@ function serialize() {
 }
 
 function loadGraph(data) {
+  state.name = (typeof data.name === "string" && data.name.trim()) || "Untitled ontology";
+  docTitleEl.value = state.name;
+  document.title = state.name + " — Ontoloom";
   state.nodes = (data.nodes || []).map((n) => ({
     id: n.id,
     labels: Array.isArray(n.labels) ? n.labels : [],
@@ -661,7 +667,7 @@ async function saveToServer() {
 
 async function exportAs(format) {
   try {
-    const res = await fetch("/api/export/" + format, {
+    const res = await fetch("/api/export/" + format + "?name=" + encodeURIComponent(state.name), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(serialize()),
@@ -695,6 +701,12 @@ function triggerDownload(blob, filename) {
 /* ======================================================================
  * Toolbar wiring
  * ==================================================================== */
+docTitleEl.addEventListener("input", () => {
+  state.name = docTitleEl.value.trim() || "Untitled ontology";
+  document.title = state.name + " — Ontoloom";
+  scheduleSave();
+});
+
 document.getElementById("btn-add").addEventListener("click", () => {
   const p = screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
   addNode(p.x, p.y);

@@ -199,6 +199,13 @@ fn handle_export(req: &Request, format: &str) -> Response {
         Ok(g) => g,
         Err(e) => return Response::text("400 Bad Request", &format!("invalid graph: {}", e)),
     };
+    // An optional `?name=` lets the user choose the download's base name; the
+    // correct extension for the format is always appended.
+    let filename = match query_param(&req.path, "name").map(|n| sanitize_filename(&n)) {
+        Some(base) if !base.is_empty() => format!("{}.{}", base, spec.extension),
+        _ => spec.filename.to_string(),
+    };
+
     match export::export(&graph, format) {
         Ok(output) => {
             let mut resp = Response::new(
@@ -208,7 +215,7 @@ fn handle_export(req: &Request, format: &str) -> Response {
             );
             resp.extra_headers.push(format!(
                 "Content-Disposition: attachment; filename=\"{}\"",
-                spec.filename
+                filename
             ));
             resp
         }
@@ -246,6 +253,22 @@ fn query_param(path: &str, key: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Turn a user-supplied title into a safe download base name: keep letters,
+/// digits, spaces, dashes, dots and underscores; replace anything else with
+/// `_`; collapse the result and cap its length. Never returns a path.
+fn sanitize_filename(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.trim().chars() {
+        if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' || c == '.' {
+            out.push(c);
+        } else {
+            out.push('_');
+        }
+    }
+    let trimmed = out.trim().trim_matches('.').trim();
+    trimmed.chars().take(120).collect()
 }
 
 fn percent_decode(s: &str) -> String {

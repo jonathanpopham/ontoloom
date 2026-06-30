@@ -13,6 +13,7 @@ use crate::model::Graph;
 pub struct ExportFormat {
     pub key: &'static str,
     pub filename: &'static str,
+    pub extension: &'static str,
     pub content_type: &'static str,
 }
 
@@ -20,21 +21,25 @@ pub const FORMATS: &[ExportFormat] = &[
     ExportFormat {
         key: "jsonl",
         filename: "ontology.jsonl",
+        extension: "jsonl",
         content_type: "application/x-ndjson",
     },
     ExportFormat {
         key: "cypher",
         filename: "ontology.cypher",
+        extension: "cypher",
         content_type: "text/plain; charset=utf-8",
     },
     ExportFormat {
         key: "json",
         filename: "ontology.json",
+        extension: "json",
         content_type: "application/json",
     },
     ExportFormat {
         key: "graphml",
         filename: "ontology.graphml",
+        extension: "graphml",
         content_type: "application/xml",
     },
 ];
@@ -259,6 +264,7 @@ fn to_node_link_json(graph: &Graph) -> String {
     let doc = obj(vec![
         ("format", s("ontoloom/graph")),
         ("version", Json::Num(1.0)),
+        ("name", s(&graph.name)),
         ("nodes", Json::Arr(nodes)),
         ("relationships", Json::Arr(rels)),
     ]);

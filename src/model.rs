@@ -39,6 +39,8 @@ pub struct Relationship {
 
 #[derive(Debug, Clone, Default)]
 pub struct Graph {
+    /// Optional human title for the whole graph; drives the export file name.
+    pub name: String,
     pub nodes: Vec<Node>,
     pub relationships: Vec<Relationship>,
 }
@@ -110,6 +112,7 @@ impl Graph {
         }
 
         let graph = Graph {
+            name: value.get_str("name").unwrap_or("").to_string(),
             nodes,
             relationships,
         };

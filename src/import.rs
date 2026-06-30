@@ -83,6 +83,7 @@ fn looks_like_jsonl(text: &str) -> bool {
 
 fn import_json(text: &str) -> Result<String, String> {
     let value = parse(text).map_err(|e| format!("invalid JSON: {}", e))?;
+    let name = value.get_str("name").unwrap_or("").to_string();
     let nodes_json = value
         .get("nodes")
         .and_then(|v| v.as_array())
@@ -124,7 +125,12 @@ fn import_json(text: &str) -> Result<String, String> {
         let props = object_pairs(r.get("properties"));
         rels.push(rel_json(&id, rtype, from, to, props));
     }
-    Ok(wire(nodes, rels))
+    Ok(obj(vec![
+        ("name", s(&name)),
+        ("nodes", Json::Arr(nodes)),
+        ("relationships", Json::Arr(rels)),
+    ])
+    .to_compact())
 }
 
 // ---------------------------------------------------------------------------
@@ -876,6 +882,20 @@ mod tests {
     #[test]
     fn round_trips_graphml() {
         round_trip("graphml", "graphml");
+    }
+
+    #[test]
+    fn json_round_trips_the_graph_name() {
+        let wire = parse(
+            r#"{"name":"Patient Intake","nodes":[{"id":"n1","caption":"A"}],"relationships":[]}"#,
+        )
+        .unwrap();
+        let graph = Graph::from_wire(&wire).unwrap();
+        assert_eq!(graph.name, "Patient Intake");
+        let exported = export::export(&graph, "json").unwrap();
+        let imported = import_auto(&exported, "x.json").unwrap();
+        let back = Graph::from_wire(&parse(&imported).unwrap()).unwrap();
+        assert_eq!(back.name, "Patient Intake");
     }
 
     #[test]

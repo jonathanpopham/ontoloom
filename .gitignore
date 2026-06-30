@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+*.pdb
+
+# Local working graphs produced by running the tool.
+ontoloom-graph.json
+smoke-graph.json
+
+.DS_Store

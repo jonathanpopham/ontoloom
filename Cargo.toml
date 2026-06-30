@@ -1,0 +1,21 @@
+[package]
+name = "ontoloom"
+version = "0.1.0"
+edition = "2021"
+description = "A lightweight, airgapped, dependency-free ontology / knowledge-graph builder with a visual browser GUI and Neo4j-compatible exports."
+license = "MIT"
+repository = "https://github.com/jonathanpopham/ontoloom"
+readme = "README.md"
+keywords = ["ontology", "knowledge-graph", "neo4j", "graph", "airgapped"]
+categories = ["visualization", "command-line-utilities"]
+
+# Ontoloom has ZERO external dependencies — std only, by design.
+# This keeps the binary small, auditable, and fully airgapped.
+[dependencies]
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"

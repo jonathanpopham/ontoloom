@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ontoloom — Ontology Builder</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <line x1="9" y1="10" x2="22" y2="21" stroke="#5b8def" stroke-width="2"/>
+        <line x1="22" y1="11" x2="9" y2="22" stroke="#3a4763" stroke-width="2"/>
+        <circle cx="9" cy="10" r="4" fill="#5b8def"/>
+        <circle cx="22" cy="11" r="4" fill="#7cc4a4"/>
+        <circle cx="9" cy="22" r="4" fill="#d98b6a"/>
+        <circle cx="22" cy="21" r="4" fill="#b98bd9"/>
+      </svg>
+      <span class="brand-name">Ontoloom</span>
+    </div>
+
+    <div class="toolbar">
+      <button id="btn-add" class="tool" title="Add an idea (or double-click the canvas)">＋ Add idea</button>
+      <button id="btn-connect" class="tool" title="Connect two ideas">⤳ Connect</button>
+      <button id="btn-delete" class="tool" title="Delete selected (Delete key)">🗑 Delete</button>
+      <span class="divider"></span>
+      <button id="btn-save" class="tool" title="Save to disk">💾 Save</button>
+      <button id="btn-load" class="tool" title="Reload from disk">↺ Reload</button>
+      <span class="divider"></span>
+      <div class="export-group">
+        <button id="btn-export" class="tool primary">⬇ Export ▾</button>
+        <div id="export-menu" class="menu hidden">
+          <button data-format="jsonl">Neo4j JSONL <span class="hint">.jsonl</span></button>
+          <button data-format="cypher">Cypher script <span class="hint">.cypher</span></button>
+          <button data-format="json">Ontoloom JSON <span class="hint">.json</span></button>
+          <button data-format="graphml">GraphML <span class="hint">.graphml</span></button>
+        </div>
+      </div>
+      <span class="divider"></span>
+      <button id="btn-import" class="tool" title="Import an Ontoloom JSON file">📂 Import</button>
+      <button id="btn-clear" class="tool danger" title="Clear the whole canvas">✕ Clear</button>
+      <input id="file-input" type="file" accept=".json,application/json" hidden />
+    </div>
+  </header>
+
+  <main class="workspace">
+    <svg id="canvas" class="canvas">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7793" />
+        </marker>
+        <marker id="arrow-active" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#5b8def" />
+        </marker>
+      </defs>
+      <g id="viewport">
+        <g id="edges-layer"></g>
+        <g id="nodes-layer"></g>
+      </g>
+    </svg>
+
+    <aside id="inspector" class="inspector empty">
+      <div class="inspector-empty-msg">
+        <h2>Nothing selected</h2>
+        <p>Double-click the canvas to add an idea. Click an idea or a link to edit it here.</p>
+        <ul class="tips">
+          <li><strong>Add</strong> — double-click empty space</li>
+          <li><strong>Move</strong> — drag an idea</li>
+          <li><strong>Connect</strong> — click <em>Connect</em>, then two ideas</li>
+          <li><strong>Delete</strong> — select, then press Delete</li>
+        </ul>
+      </div>
+      <div id="inspector-form" class="inspector-form hidden"></div>
+    </aside>
+  </main>
+
+  <div id="status" class="status-bar">
+    <span id="status-text">Ready.</span>
+    <span id="counts" class="counts"></span>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

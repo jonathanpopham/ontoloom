@@ -2,6 +2,8 @@
 
 **A lightweight, airgapped ontology & knowledge-graph builder — for people who think in ideas, not Cypher.**
 
+![Ontoloom — a visual ontology built from ideas and links](docs/screenshot.png)
+
 Ontoloom is a single Rust binary with **zero external dependencies**. Run it and a visual graph editor opens in your browser. Draw out your ideas as nodes and links, then export them as Neo4j-ready **JSONL**, a runnable **Cypher** script, plain **JSON**, or **GraphML** — ready to load into Neo4j, Gephi, yEd, or back into Ontoloom.
 
 It runs **entirely on your machine, on `127.0.0.1`, with no network access whatsoever.** No accounts, no cloud, no telemetry, nothing to fetch. Drop the binary on an airgapped box and it just works.
@@ -14,6 +16,12 @@ It runs **entirely on your machine, on `127.0.0.1`, with no network access whats
   Editor:    http://127.0.0.1:7878/
   Data file: ./ontoloom-graph.json
 ```
+
+## Demo
+
+▶️ **[Watch a 3-minute walkthrough](https://github.com/jonathanpopham/ontoloom/releases/download/v0.1.0/ontoloom-demo.mp4)** — building an ontology from scratch and exporting it for Neo4j.
+
+[![Watch the Ontoloom demo](docs/screenshot.png)](https://github.com/jonathanpopham/ontoloom/releases/download/v0.1.0/ontoloom-demo.mp4)
 
 ---
 

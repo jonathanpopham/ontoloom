@@ -62,6 +62,39 @@ cargo build --release
 
 Your browser opens to the editor automatically. That's it.
 
+## Quick tutorial — your first ontology in 2 minutes
+
+Let's model a tiny knowledge graph: **an author who wrote a book, published by a publisher.** Start Ontoloom (`./ontoloom`) and follow along in the browser tab that opens.
+
+1. **Name it.** Click the title at the top left (it says *Untitled ontology*) and type `Library`. This name becomes your export file name later.
+
+2. **Add the first idea.** Double-click anywhere on the dotted canvas. A circle appears and the panel on the right opens. In **Name**, type `Jane Austen`. In **Types / labels**, type `Author`. (Labels are how you group ideas — they become Neo4j labels on export.)
+
+3. **Add two more.** Double-click two more empty spots and make:
+   - `Pride and Prejudice` with label `Book`
+   - `T. Egerton` with label `Publisher`
+
+   Notice each label gets its own color, so kinds of ideas are easy to tell apart.
+
+4. **Give one some detail.** Click the `Pride and Prejudice` circle, hit **+ Add property**, and add `year` → `1813`. Properties are the facts attached to an idea. (Type a number and it stays a number; type text and it stays text.)
+
+5. **Connect them.** Click **⤳ Connect** in the toolbar (the canvas cursor turns to a crosshair). Click `Jane Austen`, then click `Pride and Prejudice` — a link is drawn. Click the new link's label, and set its **relationship type** to `WROTE`. Then connect `T. Egerton` → `Pride and Prejudice` and type `PUBLISHED`. Press <kbd>Esc</kbd> to leave Connect mode.
+
+6. **Tidy up.** Drag the circles around to arrange them. Scroll to zoom, drag the background to pan. Everything **autosaves** as you go.
+
+7. **Export it.** Click **⬇ Export** and choose a format:
+   - **Neo4j JSONL** or **Cypher** to load it straight into Neo4j
+   - **Ontoloom JSON** to keep an editable copy (layout included)
+   - **GraphML** for Gephi / yEd
+
+   The file downloads as `Library.jsonl` (or `.cypher`, etc.) — named from your title.
+
+8. **Bring it back.** Click **📂 Import** and pick any file you just exported. It loads back into an editable graph — names, labels, relationship types, and properties intact. Anything Ontoloom exports, it can re-import.
+
+That's the whole loop: **draw → export → hand to Neo4j (or re-import).** No query language required.
+
+> **Loading into Neo4j:** for the Cypher file, paste its contents into the Neo4j Browser and run, or `cat Library.cypher | cypher-shell -u neo4j -p <password>`. For JSONL, use `CALL apoc.import.json("file:///Library.jsonl")`.
+
 ## Usage
 
 ```

@@ -91,11 +91,7 @@ fn read_request(reader: &mut BufReader<TcpStream>) -> std::io::Result<Option<Req
         reader.read_exact(&mut body)?;
     }
 
-    Ok(Some(Request {
-        method,
-        path,
-        body,
-    }))
+    Ok(Some(Request { method, path, body }))
 }
 
 struct Response {
@@ -116,7 +112,11 @@ impl Response {
     }
 
     fn text(status: &'static str, body: &str) -> Response {
-        Response::new(status, "text/plain; charset=utf-8", body.as_bytes().to_vec())
+        Response::new(
+            status,
+            "text/plain; charset=utf-8",
+            body.as_bytes().to_vec(),
+        )
     }
 
     fn json(status: &'static str, body: String) -> Response {
@@ -128,22 +128,24 @@ fn route(req: &Request, config: &Config) -> Response {
     // Strip any query string for matching.
     let path = req.path.split('?').next().unwrap_or("/");
     match (req.method.as_str(), path) {
-        ("GET", "/") | ("GET", "/index.html") => {
-            Response::new("200 OK", "text/html; charset=utf-8", assets::INDEX_HTML.into())
-        }
+        ("GET", "/") | ("GET", "/index.html") => Response::new(
+            "200 OK",
+            "text/html; charset=utf-8",
+            assets::INDEX_HTML.into(),
+        ),
         ("GET", "/app.js") => Response::new(
             "200 OK",
             "application/javascript; charset=utf-8",
             assets::APP_JS.into(),
         ),
-        ("GET", "/style.css") => {
-            Response::new("200 OK", "text/css; charset=utf-8", assets::STYLE_CSS.into())
-        }
-        ("GET", "/favicon.svg") => Response::new(
+        ("GET", "/style.css") => Response::new(
             "200 OK",
-            "image/svg+xml",
-            assets::FAVICON_SVG.into(),
+            "text/css; charset=utf-8",
+            assets::STYLE_CSS.into(),
         ),
+        ("GET", "/favicon.svg") => {
+            Response::new("200 OK", "image/svg+xml", assets::FAVICON_SVG.into())
+        }
         ("GET", "/api/health") => Response::json("200 OK", "{\"status\":\"ok\"}".into()),
         ("GET", "/api/state") => load_state(config),
         ("POST", "/api/state") => save_state(req, config),
@@ -173,11 +175,24 @@ fn save_state(req: &Request, config: &Config) -> Response {
         Ok(p) => p,
         Err(e) => return Response::text("400 Bad Request", &format!("invalid JSON: {}", e)),
     };
-    if let Err(e) = Graph::from_wire(&parsed) {
-        return Response::text("400 Bad Request", &format!("invalid graph: {}", e));
-    }
+    let graph = match Graph::from_wire(&parsed) {
+        Ok(g) => g,
+        Err(e) => return Response::text("400 Bad Request", &format!("invalid graph: {}", e)),
+    };
     match std::fs::write(&config.data_path, body.as_bytes()) {
-        Ok(_) => Response::json("200 OK", "{\"status\":\"saved\"}".into()),
+        Ok(_) => {
+            // Soft schema findings ride along with the save; they never block it.
+            let warnings = graph
+                .schema_warnings()
+                .into_iter()
+                .map(|w| crate::json::s(&w))
+                .collect::<Vec<_>>();
+            let body = crate::json::obj(vec![
+                ("status", crate::json::s("saved")),
+                ("warnings", crate::json::Json::Arr(warnings)),
+            ]);
+            Response::json("200 OK", body.to_compact())
+        }
         Err(e) => Response::text("500 Internal Server Error", &format!("write failed: {}", e)),
     }
 }
@@ -208,11 +223,7 @@ fn handle_export(req: &Request, format: &str) -> Response {
 
     match export::export(&graph, format) {
         Ok(output) => {
-            let mut resp = Response::new(
-                "200 OK",
-                spec.content_type,
-                output.into_bytes(),
-            );
+            let mut resp = Response::new("200 OK", spec.content_type, output.into_bytes());
             resp.extra_headers.push(format!(
                 "Content-Disposition: attachment; filename=\"{}\"",
                 filename
@@ -236,7 +247,10 @@ fn handle_import(req: &Request) -> Response {
             // the rest of the tool would reject.
             match parse(&wire).and_then(|v| Graph::from_wire(&v)) {
                 Ok(_) => Response::json("200 OK", wire),
-                Err(e) => Response::text("400 Bad Request", &format!("imported graph is invalid: {}", e)),
+                Err(e) => Response::text(
+                    "400 Bad Request",
+                    &format!("imported graph is invalid: {}", e),
+                ),
             }
         }
         Err(e) => Response::text("400 Bad Request", &e),

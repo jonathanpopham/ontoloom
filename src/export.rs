@@ -119,7 +119,9 @@ fn node_labels(graph: &Graph, id: &str) -> Vec<Json> {
 fn to_cypher(graph: &Graph) -> String {
     let mut out = String::new();
     out.push_str("// Ontoloom export — load in Neo4j Browser or cypher-shell.\n");
-    out.push_str("// Each node becomes a backticked variable so relationships can reference it.\n\n");
+    out.push_str(
+        "// Each node becomes a backticked variable so relationships can reference it.\n\n",
+    );
 
     for node in &graph.nodes {
         let var = cypher_var(&node.id);
@@ -166,7 +168,11 @@ fn cypher_var(id: &str) -> String {
 /// identifier, to keep common cases readable.
 fn cypher_label(name: &str) -> String {
     let plain = !name.is_empty()
-        && name.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false)
+        && name
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_alphabetic() || c == '_')
+            .unwrap_or(false)
         && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
     if plain {
         name.to_string()
@@ -188,7 +194,11 @@ fn cypher_props(props: &[(String, Json)]) -> String {
 
 fn cypher_key(key: &str) -> String {
     let plain = !key.is_empty()
-        && key.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false)
+        && key
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_alphabetic() || c == '_')
+            .unwrap_or(false)
         && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
     if plain {
         key.to_string()
@@ -281,9 +291,13 @@ fn to_graphml(graph: &Graph) -> String {
     out.push_str("<graphml xmlns=\"http://graphml.graphdrawing.org/xmlns\">\n");
     out.push_str("  <key id=\"labels\" for=\"node\" attr.name=\"labels\" attr.type=\"string\"/>\n");
     out.push_str("  <key id=\"name\" for=\"node\" attr.name=\"name\" attr.type=\"string\"/>\n");
-    out.push_str("  <key id=\"props\" for=\"node\" attr.name=\"properties\" attr.type=\"string\"/>\n");
+    out.push_str(
+        "  <key id=\"props\" for=\"node\" attr.name=\"properties\" attr.type=\"string\"/>\n",
+    );
     out.push_str("  <key id=\"type\" for=\"edge\" attr.name=\"type\" attr.type=\"string\"/>\n");
-    out.push_str("  <key id=\"eprops\" for=\"edge\" attr.name=\"properties\" attr.type=\"string\"/>\n");
+    out.push_str(
+        "  <key id=\"eprops\" for=\"edge\" attr.name=\"properties\" attr.type=\"string\"/>\n",
+    );
     out.push_str("  <graph id=\"G\" edgedefault=\"directed\">\n");
 
     for node in &graph.nodes {

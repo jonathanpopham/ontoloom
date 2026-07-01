@@ -120,13 +120,19 @@ fn parse_args() -> Result<Option<Options>, String> {
 }
 
 fn print_help() {
-    println!("ontoloom {} — airgapped ontology / knowledge-graph builder", env!("CARGO_PKG_VERSION"));
+    println!(
+        "ontoloom {} — airgapped ontology / knowledge-graph builder",
+        env!("CARGO_PKG_VERSION")
+    );
     println!();
     println!("USAGE:");
     println!("    ontoloom [OPTIONS]");
     println!();
     println!("OPTIONS:");
-    println!("    -p, --port <PORT>    Port to serve on (default: {})", DEFAULT_PORT);
+    println!(
+        "    -p, --port <PORT>    Port to serve on (default: {})",
+        DEFAULT_PORT
+    );
     println!("    -d, --data <FILE>    Graph autosave file (default: ./ontoloom-graph.json)");
     println!("        --no-open        Do not open a browser automatically");
     println!("    -h, --help           Print help");
@@ -150,6 +156,9 @@ fn open_browser(url: &str) {
         Command::new("xdg-open").arg(url).spawn()
     };
     if result.is_err() {
-        eprintln!("ontoloom: open your browser to {} (auto-open unavailable)", url);
+        eprintln!(
+            "ontoloom: open your browser to {} (auto-open unavailable)",
+            url
+        );
     }
 }

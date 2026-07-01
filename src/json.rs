@@ -186,7 +186,10 @@ struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     fn byte_at(&self, idx: usize) -> usize {
-        self.chars.get(idx).map(|(b, _)| *b).unwrap_or(self.bytes.len())
+        self.chars
+            .get(idx)
+            .map(|(b, _)| *b)
+            .unwrap_or(self.bytes.len())
     }
 
     fn peek(&self) -> Option<char> {
@@ -220,7 +223,11 @@ impl<'a> Parser<'a> {
             Some('t') | Some('f') => self.parse_bool(),
             Some('n') => self.parse_null(),
             Some(c) if c == '-' || c.is_ascii_digit() => self.parse_number(),
-            Some(c) => Err(format!("unexpected character '{}' at byte {}", c, self.byte_at(self.pos))),
+            Some(c) => Err(format!(
+                "unexpected character '{}' at byte {}",
+                c,
+                self.byte_at(self.pos)
+            )),
             None => Err("unexpected end of input".to_string()),
         }
     }
@@ -236,12 +243,18 @@ impl<'a> Parser<'a> {
         loop {
             self.skip_ws();
             if self.peek() != Some('"') {
-                return Err(format!("expected string key at byte {}", self.byte_at(self.pos)));
+                return Err(format!(
+                    "expected string key at byte {}",
+                    self.byte_at(self.pos)
+                ));
             }
             let key = self.parse_string()?;
             self.skip_ws();
             if self.next() != Some(':') {
-                return Err(format!("expected ':' after key at byte {}", self.byte_at(self.pos)));
+                return Err(format!(
+                    "expected ':' after key at byte {}",
+                    self.byte_at(self.pos)
+                ));
             }
             let value = self.parse_value()?;
             pairs.push((key, value));
@@ -249,7 +262,12 @@ impl<'a> Parser<'a> {
             match self.next() {
                 Some(',') => continue,
                 Some('}') => break,
-                _ => return Err(format!("expected ',' or '}}' at byte {}", self.byte_at(self.pos))),
+                _ => {
+                    return Err(format!(
+                        "expected ',' or '}}' at byte {}",
+                        self.byte_at(self.pos)
+                    ))
+                }
             }
         }
         Ok(Json::Obj(pairs))
@@ -270,7 +288,12 @@ impl<'a> Parser<'a> {
             match self.next() {
                 Some(',') => continue,
                 Some(']') => break,
-                _ => return Err(format!("expected ',' or ']' at byte {}", self.byte_at(self.pos))),
+                _ => {
+                    return Err(format!(
+                        "expected ',' or ']' at byte {}",
+                        self.byte_at(self.pos)
+                    ))
+                }
             }
         }
         Ok(Json::Arr(items))
@@ -333,7 +356,10 @@ impl<'a> Parser<'a> {
         } else if self.consume_literal("false") {
             Ok(Json::Bool(false))
         } else {
-            Err(format!("invalid literal at byte {}", self.byte_at(self.pos)))
+            Err(format!(
+                "invalid literal at byte {}",
+                self.byte_at(self.pos)
+            ))
         }
     }
 
@@ -341,7 +367,10 @@ impl<'a> Parser<'a> {
         if self.consume_literal("null") {
             Ok(Json::Null)
         } else {
-            Err(format!("invalid literal at byte {}", self.byte_at(self.pos)))
+            Err(format!(
+                "invalid literal at byte {}",
+                self.byte_at(self.pos)
+            ))
         }
     }
 
@@ -371,7 +400,10 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-        let slice: String = self.chars[start..self.pos].iter().map(|(_, c)| *c).collect();
+        let slice: String = self.chars[start..self.pos]
+            .iter()
+            .map(|(_, c)| *c)
+            .collect();
         slice
             .parse::<f64>()
             .map(Json::Num)

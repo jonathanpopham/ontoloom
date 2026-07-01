@@ -70,7 +70,10 @@ fn looks_like_jsonl(text: &str) -> bool {
                 && first.ends_with('}')
                 && parse(first)
                     .ok()
-                    .and_then(|v| v.get_str("type").map(|t| t == "node" || t == "relationship"))
+                    .and_then(|v| {
+                        v.get_str("type")
+                            .map(|t| t == "node" || t == "relationship")
+                    })
                     .unwrap_or(false)
         }
         None => false,
@@ -163,7 +166,10 @@ fn import_jsonl(text: &str) -> Result<String, String> {
                     auto_rel += 1;
                     format!("r{}", auto_rel)
                 });
-                let rtype = v.get_str("label").or_else(|| v.get_str("type")).unwrap_or("RELATED_TO");
+                let rtype = v
+                    .get_str("label")
+                    .or_else(|| v.get_str("type"))
+                    .unwrap_or("RELATED_TO");
                 let from = endpoint_id(&v, "start")
                     .ok_or_else(|| format!("line {}: relationship has no start", i + 1))?;
                 let to = endpoint_id(&v, "end")
@@ -180,7 +186,10 @@ fn import_jsonl(text: &str) -> Result<String, String> {
 /// `start`/`end` may be an object `{"id": ...}` or a bare id value.
 fn endpoint_id(rel: &Json, key: &str) -> Option<String> {
     match rel.get(key) {
-        Some(Json::Obj(_)) => rel.get(key).and_then(|o| o.get_str("id")).map(|s| s.to_string()),
+        Some(Json::Obj(_)) => rel
+            .get(key)
+            .and_then(|o| o.get_str("id"))
+            .map(|s| s.to_string()),
         Some(Json::Str(s)) => Some(s.clone()),
         Some(Json::Num(n)) => Some(format_num(*n)),
         _ => None,
@@ -260,7 +269,13 @@ fn parse_cypher_rel(body: &str, auto_rel: usize) -> Result<Json, String> {
     c.expect('>')?;
     c.expect('(')?;
     let to = c.name()?;
-    Ok(rel_json(&format!("r{}", auto_rel), &rtype, &from, &to, props))
+    Ok(rel_json(
+        &format!("r{}", auto_rel),
+        &rtype,
+        &from,
+        &to,
+        props,
+    ))
 }
 
 /// A small cursor over a Cypher fragment.
@@ -297,7 +312,10 @@ impl Cur {
         if self.eat(ch) {
             Ok(())
         } else {
-            Err(format!("Cypher: expected '{}' near position {}", ch, self.i))
+            Err(format!(
+                "Cypher: expected '{}' near position {}",
+                ch, self.i
+            ))
         }
     }
     /// A backticked `` `name` `` or a bare identifier.
@@ -480,7 +498,13 @@ fn import_graphml(text: &str) -> Result<String, String> {
             }
         }
     }
-    let resolve = |k: &str| keymap.iter().find(|(id, _)| id == k).map(|(_, n)| n.clone()).unwrap_or_else(|| k.to_string());
+    let resolve = |k: &str| {
+        keymap
+            .iter()
+            .find(|(id, _)| id == k)
+            .map(|(_, n)| n.clone())
+            .unwrap_or_else(|| k.to_string())
+    };
 
     let mut nodes = Vec::new();
     let mut rels = Vec::new();
@@ -494,7 +518,11 @@ fn import_graphml(text: &str) -> Result<String, String> {
 
     for tok in tokens {
         match tok {
-            Tok::Start { name, attrs, self_close } => match name.as_str() {
+            Tok::Start {
+                name,
+                attrs,
+                self_close,
+            } => match name.as_str() {
                 "node" | "edge" => {
                     let kind = if name == "node" { "node" } else { "edge" };
                     elem = Some((kind, attrs.clone()));
@@ -560,7 +588,13 @@ fn finalize(
         let mut props: Vec<(String, Json)> = Vec::new();
         for (k, v) in data {
             match k.as_str() {
-                "labels" => labels = v.split(':').map(|s| s.to_string()).filter(|s| !s.is_empty()).collect(),
+                "labels" => {
+                    labels = v
+                        .split(':')
+                        .map(|s| s.to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                }
                 "name" => caption = v.clone(),
                 "properties" | "props" => {
                     if let Ok(Json::Obj(pairs)) = parse(v) {
@@ -608,7 +642,9 @@ fn tokenize_xml(text: &str) -> Vec<Tok> {
                 if chars[i..].starts_with(&['<', '!', '-', '-']) {
                     // comment
                     let mut j = i + 4;
-                    while j + 2 < n && !(chars[j] == '-' && chars[j + 1] == '-' && chars[j + 2] == '>') {
+                    while j + 2 < n
+                        && !(chars[j] == '-' && chars[j + 1] == '-' && chars[j + 2] == '>')
+                    {
                         j += 1;
                     }
                     i = (j + 3).min(n);
@@ -769,7 +805,9 @@ fn coerce(value: &str) -> Json {
         return Json::Bool(false);
     }
     if let Ok(n) = t.parse::<f64>() {
-        if t.chars().all(|c| c.is_ascii_digit() || c == '-' || c == '.' || c == 'e' || c == 'E' || c == '+') {
+        if t.chars()
+            .all(|c| c.is_ascii_digit() || c == '-' || c == '.' || c == 'e' || c == 'E' || c == '+')
+        {
             return Json::Num(n);
         }
     }
@@ -855,7 +893,11 @@ mod tests {
         assert_eq!(alice.caption, "Alice", "{}: caption", format);
         // A scalar property survives with its type.
         let age = alice.properties.iter().find(|(k, _)| k == "age");
-        assert!(matches!(age, Some((_, Json::Num(_)))), "{}: age property", format);
+        assert!(
+            matches!(age, Some((_, Json::Num(_)))),
+            "{}: age property",
+            format
+        );
         // Relationship type survives.
         assert!(
             reparsed.relationships.iter().any(|r| r.rel_type == "KNOWS"),
@@ -901,9 +943,21 @@ mod tests {
     #[test]
     fn detects_by_content_without_extension() {
         let graph = sample_graph();
-        assert_eq!(detect(&export::export(&graph, "graphml").unwrap(), "x"), "graphml");
-        assert_eq!(detect(&export::export(&graph, "jsonl").unwrap(), "x"), "jsonl");
-        assert_eq!(detect(&export::export(&graph, "cypher").unwrap(), "x"), "cypher");
-        assert_eq!(detect(&export::export(&graph, "json").unwrap(), "x"), "json");
+        assert_eq!(
+            detect(&export::export(&graph, "graphml").unwrap(), "x"),
+            "graphml"
+        );
+        assert_eq!(
+            detect(&export::export(&graph, "jsonl").unwrap(), "x"),
+            "jsonl"
+        );
+        assert_eq!(
+            detect(&export::export(&graph, "cypher").unwrap(), "x"),
+            "cypher"
+        );
+        assert_eq!(
+            detect(&export::export(&graph, "json").unwrap(), "x"),
+            "json"
+        );
     }
 }

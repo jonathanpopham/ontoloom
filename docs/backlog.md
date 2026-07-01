@@ -20,8 +20,8 @@ TrailTracker's `docs/backlog.md` (numbered items, statuses `TODO` · `WIP` ·
   (SOUL.md, ECOSYSTEM.md, prompts/) when the standard lands. Ontoloom's role:
   the AUTHORS/RENDERS node — visual ontology authoring + graph review for
   TrailTracker output (code graphs, Salesforce org graphs), ghostie memory
-  graphs, and the Perfecting Peds ontology-review sessions with the client.
+  graphs, and client ontology-review sessions.
 - **OL-3** `TODO` **Ecosystem-graph import path.** Load the `/ecosystem` skill's
   robot-mode JSONL (and TrailTracker graph JSONL) for the meta-view of the
-  stack itself. First concrete consumer: Perfecting Peds Phase 0 demo
-  (TrailTracker over synthetic Salesforce metadata → Ontoloom).
+  stack itself. First concrete consumer: a client-engagement demo
+  (code-graph JSONL rendered for visual review).

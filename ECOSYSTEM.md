@@ -9,5 +9,5 @@ Edges:
 - The v0.2 markdown-vault importer reads `[[wikilink]]` note collections —
   including [[ghostie]]'s memory vault — as graphs.
 - Client-facing: the ontology-review canvas for consulting engagements.
-- Governed by [[bauplan]]; goal prompts in `prompts/`, ledger in
+- Governed by [[auftragstaktik]]; goal prompts in `prompts/`, ledger in
   `docs/backlog.md`.

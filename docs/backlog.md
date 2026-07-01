@@ -4,7 +4,10 @@ Started 2026-07-01. Idea ledger for Ontoloom; follows the same convention as
 TrailTracker's `docs/backlog.md` (numbered items, statuses `TODO` · `WIP` ·
 `DONE` · `BLOCKED` · `BRAINSTORM`).
 
-- **OL-1** `TODO` **v0.2 expansion goal prompt — RECEIVED 2026-07-01**, filed at
+- **OL-1** `WIP` — **M1 DONE** (commit d0d5b33, 2026-07-01): schema model layer,
+  hard schema self-validation, inheritance-aware soft warnings, save response
+  carries warnings. M2 (schema editor UI) next; M2–M5 still need the
+  truncation reconstructions reviewed. **v0.2 goal prompt — RECEIVED 2026-07-01**, filed at
   [`prompts/2026-07-01-goal-v0.2.md`](../prompts/2026-07-01-goal-v0.2.md):
   schema layer (M1) → schema editor UI (M2) → schema through exports (M3) →
   OWL/Turtle export (M4) → Obsidian vault importer (M5) → ship 0.2.0 without

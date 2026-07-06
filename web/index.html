@@ -100,6 +100,12 @@
     <div class="cm-stage">
       <div class="cm-bar">
         <div id="cm-stats" class="cm-stats"></div>
+        <div id="cm-layout" class="cm-levels cm-layout" role="group" aria-label="Layout">
+          <button data-m="tree" aria-pressed="true"
+                  title="Tidy tree — indented drill-down by containment">Tree</button>
+          <button data-m="web" aria-pressed="false"
+                  title="Web — force-directed graph; domains cluster, dependencies read as lines">Web</button>
+        </div>
         <div id="cm-levels" class="cm-levels" role="group" aria-label="Expand to level">
           <button data-d="1" aria-pressed="true">Domains</button>
           <button data-d="2" aria-pressed="false">Units</button>

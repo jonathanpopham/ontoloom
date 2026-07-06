@@ -49,6 +49,7 @@
   let deps = {};        // wire node id -> [{id, count}] from DEPENDS_ON
   let matchSet = null;  // search results (tree nodes), null = no active search
   let selectedId = null;
+  let showDeps = true;  // draw DEPENDS_ON arcs between visible nodes
   let T = { x: 60, y: 40, k: 1 }; // pan/zoom transform
 
   function prop(n, key) {
@@ -274,6 +275,36 @@
     for (const [p, c] of edges) {
       const mx = (p.x + c.x) / 2;
       s += `<path class="cm-edge" d="M${p.x} ${p.y}C${mx} ${p.y} ${mx} ${c.y} ${c.x} ${c.y}"/>`;
+    }
+
+    // Cross-links: DEPENDS_ON between currently VISIBLE nodes (domain→domain,
+    // unit→unit). The ontology is a graph, not a tree — these arcs are the
+    // coupling the CONTAINS tree can't show (everything leaning on the event
+    // bus, Ordering touching Basket, ...). Drawn as bowed dashed arcs with the
+    // coupling count; nodes still paint on top.
+    if (showDeps) {
+      const wireToTree = {};
+      for (const n of shown) {
+        if (n.real && !(n.real.id in wireToTree)) wireToTree[n.real.id] = n;
+      }
+      for (const fromWire in deps) {
+        const a = wireToTree[fromWire];
+        if (!a) continue;
+        for (const d of deps[fromWire]) {
+          const b = wireToTree[d.id];
+          if (!b || a === b) continue;
+          const bow = 46 + Math.abs(a.y - b.y) * 0.12;
+          const cx = Math.min(a.x, b.x) - bow;
+          const midX = (a.x + b.x) / 2 - bow * 0.72;
+          const midY = (a.y + b.y) / 2;
+          s +=
+            `<path class="cm-dep" d="M${a.x} ${a.y}C${cx} ${a.y} ${cx} ${b.y} ${b.x} ${b.y}"/>` +
+            `<circle class="cm-dep-tip" cx="${b.x - 9}" cy="${b.y}" r="2"/>` +
+            (d.count
+              ? `<text class="cm-dep-count" x="${midX}" y="${midY + 3}">${esc(String(d.count))}</text>`
+              : "");
+        }
+      }
     }
     for (const n of shown) {
       const hasKids = n.children.length > 0;
@@ -534,6 +565,15 @@
     applyT();
   }
   document.getElementById("cm-fit").addEventListener("click", fit);
+
+  const depsBtn = document.getElementById("cm-deps");
+  if (depsBtn) {
+    depsBtn.addEventListener("click", () => {
+      showDeps = !showDeps;
+      depsBtn.setAttribute("aria-pressed", showDeps ? "true" : "false");
+      render();
+    });
+  }
 
   /* ====================================================================
    * Stats strip (raw wire counts, independent of tree grouping)

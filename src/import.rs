@@ -940,6 +940,100 @@ mod tests {
         assert_eq!(back.name, "Patient Intake");
     }
 
+    /// The code-map load path: a TrailTracker hierarchy export (Ontoloom-wire
+    /// JSON with `view:"hierarchy"`, `level`, seed x/y, CONTAINS tree edges
+    /// and DEPENDS_ON coupling edges) must survive the import → wire → model
+    /// round trip untouched, because the browser's code map drills exactly
+    /// these fields.
+    #[test]
+    fn hierarchy_import_preserves_code_map_fields() {
+        let src = r#"{
+          "name":"demo (hierarchy)",
+          "nodes":[
+            {"id":"domain::Basket","labels":["Module","Domain"],"caption":"Basket",
+             "properties":{"level":"domain","view":"hierarchy","domain":"Basket","file_count":1,"symbol_count":1},
+             "x":0,"y":0},
+            {"id":"domain::Catalog","labels":["Module","Domain"],"caption":"Catalog",
+             "properties":{"level":"domain","view":"hierarchy","domain":"Catalog"},
+             "x":120,"y":0},
+            {"id":"unit::Basket.API","labels":["Module","Unit"],"caption":"Basket.API",
+             "properties":{"level":"unit","view":"hierarchy","layer":"Application","unit":"Basket.API"},
+             "x":0,"y":840},
+            {"id":"file::src/B.cs","labels":["File"],"caption":"B.cs",
+             "properties":{"level":"file","view":"hierarchy","path":"src/B.cs","unit":"Basket.API","symbol_count":1},
+             "x":0,"y":1680},
+            {"id":"fn::B.Do","labels":["Function","Symbol"],"caption":"Do",
+             "properties":{"level":"symbol","view":"hierarchy","symbol_kind":"Function","archetype":"Service","file":"src/B.cs","line":10},
+             "x":0,"y":4680}
+          ],
+          "relationships":[
+            {"id":"c1","type":"CONTAINS","from":"domain::Basket","to":"file::src/B.cs","properties":{}},
+            {"id":"c2","type":"CONTAINS","from":"unit::Basket.API","to":"file::src/B.cs","properties":{}},
+            {"id":"c3","type":"CONTAINS","from":"file::src/B.cs","to":"fn::B.Do","properties":{}},
+            {"id":"d1","type":"DEPENDS_ON","from":"domain::Basket","to":"domain::Catalog","properties":{"count":11}}
+          ]
+        }"#;
+
+        let wire = import_auto(src, "demo.ontoloom.json").expect("hierarchy import");
+        let g = Graph::from_wire(&parse(&wire).unwrap()).expect("hierarchy re-validate");
+        assert_eq!(g.name, "demo (hierarchy)");
+        assert_eq!(g.nodes.len(), 5);
+        assert_eq!(g.relationships.len(), 4);
+
+        let get = |n: &crate::model::Node, key: &str| -> Option<Json> {
+            n.properties
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.clone())
+        };
+
+        // The detection markers survive on every node.
+        for n in &g.nodes {
+            assert_eq!(
+                get(n, "view").and_then(|v| v.as_str().map(String::from)),
+                Some("hierarchy".to_string()),
+                "node {} lost its view marker",
+                n.id
+            );
+            assert!(get(n, "level").is_some(), "node {} lost its level", n.id);
+        }
+
+        // File keeps the fields the drill-down groups by.
+        let file = g.nodes.iter().find(|n| n.id == "file::src/B.cs").unwrap();
+        assert_eq!(get(file, "level").unwrap().as_str(), Some("file"));
+        assert_eq!(get(file, "unit").unwrap().as_str(), Some("Basket.API"));
+        assert_eq!(get(file, "path").unwrap().as_str(), Some("src/B.cs"));
+        // Seed coordinates survive as numbers.
+        assert_eq!(file.y, 1680.0);
+
+        // Symbol keeps kind / archetype / location for the inspector.
+        let sym = g.nodes.iter().find(|n| n.id == "fn::B.Do").unwrap();
+        assert_eq!(get(sym, "symbol_kind").unwrap().as_str(), Some("Function"));
+        assert_eq!(get(sym, "archetype").unwrap().as_str(), Some("Service"));
+        assert!(matches!(get(sym, "line"), Some(Json::Num(n)) if n == 10.0));
+
+        // The CONTAINS tree (domain→file, unit→file, file→symbol) is intact,
+        // and DEPENDS_ON keeps its count for the coupling chips.
+        let contains: Vec<_> = g
+            .relationships
+            .iter()
+            .filter(|r| r.rel_type == "CONTAINS")
+            .collect();
+        assert_eq!(contains.len(), 3);
+        assert!(contains
+            .iter()
+            .any(|r| r.from == "file::src/B.cs" && r.to == "fn::B.Do"));
+        let dep = g
+            .relationships
+            .iter()
+            .find(|r| r.rel_type == "DEPENDS_ON")
+            .expect("DEPENDS_ON survives");
+        assert_eq!(dep.from, "domain::Basket");
+        assert_eq!(dep.to, "domain::Catalog");
+        let count = dep.properties.iter().find(|(k, _)| k == "count");
+        assert!(matches!(count, Some((_, Json::Num(n))) if *n == 11.0));
+    }
+
     #[test]
     fn detects_by_content_without_extension() {
         let graph = sample_graph();

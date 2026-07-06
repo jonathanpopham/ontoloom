@@ -27,6 +27,7 @@
 
 
     <div class="toolbar">
+      <button id="btn-mode" class="tool hidden" title="Switch between the code map and the manual editor">⌗ Code map</button>
       <button id="btn-add" class="tool" title="Add an idea (or double-click the canvas)">＋ Add idea</button>
       <button id="btn-connect" class="tool" title="Connect two ideas">⤳ Connect</button>
       <button id="btn-delete" class="tool" title="Delete selected (Delete key)">🗑 Delete</button>
@@ -50,7 +51,7 @@
     </div>
   </header>
 
-  <main class="workspace">
+  <main id="editor" class="workspace">
     <svg id="canvas" class="canvas">
       <defs>
         <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -81,6 +82,42 @@
     </aside>
   </main>
 
+  <!-- Code map mode: lazy drill-down for imported code hierarchies.
+       Hidden unless the loaded graph is a hierarchy (see codemap.js). -->
+  <main id="codemap" class="workspace hidden">
+    <div class="cm-stage">
+      <div class="cm-bar">
+        <div id="cm-stats" class="cm-stats"></div>
+        <div id="cm-levels" class="cm-levels" role="group" aria-label="Expand to level">
+          <button data-d="1" aria-pressed="true">Domains</button>
+          <button data-d="2" aria-pressed="false">Units</button>
+          <button data-d="3" aria-pressed="false">Files</button>
+          <button data-d="4" aria-pressed="false">Symbols</button>
+        </div>
+        <input id="cm-search" type="search" placeholder="find symbol / file…"
+               autocomplete="off" aria-label="Search the code map" />
+        <button id="cm-fit" class="tool">Fit</button>
+        <span id="cm-visible" class="cm-visible"></span>
+      </div>
+      <div id="cm-wrap" class="cm-wrap">
+        <svg id="cm-svg"><g id="cm-viewport"></g></svg>
+        <div class="cm-legend">
+          <h4>Levels &amp; kinds</h4>
+          <div class="row"><span class="sw" style="background:var(--accent)"></span>domain</div>
+          <div class="row"><span class="sw" style="background:var(--cm-unit)"></span>unit</div>
+          <div class="row"><span class="sw" style="background:var(--cm-file)"></span>file</div>
+          <div class="row">
+            <span class="sw" style="background:var(--cm-type)"></span>type&nbsp;
+            <span class="sw" style="background:var(--cm-func)"></span>function&nbsp;
+            <span class="sw" style="background:var(--cm-const)"></span>const
+          </div>
+          <div class="hint">click a node to expand · drag to pan · scroll to zoom</div>
+        </div>
+      </div>
+    </div>
+    <aside id="cm-detail" class="cm-detail empty">select a node to inspect</aside>
+  </main>
+
   <div id="status" class="status-bar">
     <span id="status-text">Ready.</span>
     <span id="counts" class="counts"></span>
@@ -88,6 +125,7 @@
 
   <div id="toast" class="toast hidden"></div>
 
+  <script src="/codemap.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

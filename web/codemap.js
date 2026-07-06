@@ -41,6 +41,11 @@
   const statsEl = document.getElementById("cm-stats");
   const visibleEl = document.getElementById("cm-visible");
   const searchInput = document.getElementById("cm-search");
+  const matchCountEl = document.getElementById("cm-match-count");
+
+  const EMPTY_DETAIL =
+    `<div class="empty-hint"><span class="glyph" aria-hidden="true">◎</span>` +
+    `click a node to expand it and inspect it here</div>`;
 
   /* ---- State ---- */
   let root = null;      // synthesized tree (root → domains → units → files → symbols)
@@ -51,6 +56,7 @@
   let selectedId = null;
   let showDeps = true;  // draw DEPENDS_ON arcs between visible nodes
   let T = { x: 60, y: 40, k: 1 }; // pan/zoom transform
+  let prevShown = new Set(); // tree ids drawn in the previous frame → "fresh" fade-in
 
   function prop(n, key) {
     return n && n.properties && typeof n.properties === "object" ? n.properties[key] : undefined;
@@ -271,10 +277,12 @@
       }
     })(root);
 
+    const KICK = { root: "repository", domain: "domain", unit: "unit", file: "file", sym: "symbol" };
     let s = "";
     for (const [p, c] of edges) {
       const mx = (p.x + c.x) / 2;
-      s += `<path class="cm-edge" d="M${p.x} ${p.y}C${mx} ${p.y} ${mx} ${c.y} ${c.x} ${c.y}"/>`;
+      const fresh = prevShown.size && !prevShown.has(c.id) ? " fresh" : "";
+      s += `<path class="cm-edge${fresh}" d="M${p.x} ${p.y}C${mx} ${p.y} ${mx} ${c.y} ${c.x} ${c.y}"/>`;
     }
 
     // Cross-links: DEPENDS_ON between currently VISIBLE nodes (domain→domain,
@@ -315,20 +323,42 @@
       const cls = ["cm-node"];
       if (selectedId === n.id) cls.push("selected");
       if (matchSet) cls.push(matchSet.has(n) ? "match" : "dim");
+      if (prevShown.size && !prevShown.has(n.id)) cls.push("fresh");
       const count = collapsed && n.nsyms ? ` <tspan fill="var(--text-faint)">·${n.nsyms}</tspan>` : "";
       const lx = r + 7;
+      // Expanded parents carry their label on the LEFT (tidy-tree style), so
+      // the trace to their children — and the children themselves — never
+      // run through the text. Leaves and collapsed nodes label right. Left
+      // labels are truncated to the column gap so neither the text nor its
+      // hit-rect can reach the previous column's nodes or steal their clicks.
+      const labelLeft = hasKids && !collapsed;
+      const gapLeft = n.depth === 0 ? Infinity : COL[Math.min(n.depth, COL.length - 1)] - COL[Math.min(n.depth, COL.length - 1) - 1];
+      const maxChars = labelLeft ? Math.max(8, Math.min(34, Math.floor((gapLeft - 45) / 7))) : 34;
+      const shownName = truncate(n.name, maxChars);
+      const estW = shownName.length * 7 + 30; // rough mono width incl. count
+      // Every node is keyboard-reachable: Tab walks the visible tree in
+      // reading order, Enter/Space expands or collapses like a click.
+      const aria =
+        ` role="button" tabindex="0" aria-label="${esc(n.name)}, ${KICK[n.type]}"` +
+        (hasKids ? ` aria-expanded="${collapsed ? "false" : "true"}"` : "");
       s +=
-        `<g class="${cls.join(" ")}" data-id="${n.id}" transform="translate(${n.x},${n.y})">` +
-        `<circle r="${r}" fill="${fill}" stroke="${col}" stroke-width="1.6"/>` +
+        `<g class="${cls.join(" ")}" data-id="${n.id}"${aria} transform="translate(${n.x},${n.y})">` +
+        (selectedId === n.id ? `<circle class="selring" r="${r + 4}"/>` : "") +
+        `<circle class="dot" r="${r}" fill="${fill}" stroke="${col}" stroke-width="1.6"/>` +
         (collapsed
           ? `<circle r="${r + 3.5}" fill="none" stroke="${col}" stroke-width="1" opacity=".4"/>`
           : "") +
-        `<text class="lbl" x="${lx}" y="3.5" font-size="${n.type === "sym" ? 10.5 : 11.5}">` +
-        esc(truncate(n.name, 34)) + count + `</text>` +
-        `<rect class="hit" x="-${r + 4}" y="-9" width="${lx + Math.min(n.name.length, 34) * 7 + 30}" height="18"/>` +
+        `<text class="lbl" x="${labelLeft ? -lx : lx}" y="3.5"` +
+        (labelLeft ? ` text-anchor="end"` : "") +
+        ` font-size="${n.type === "sym" ? 10.5 : 11.5}">` +
+        esc(shownName) + count + `</text>` +
+        (labelLeft
+          ? `<rect class="hit" x="-${lx + estW}" y="-9" width="${lx + estW + r + 4}" height="18"/>`
+          : `<rect class="hit" x="-${r + 4}" y="-9" width="${lx + estW + r + 4}" height="18"/>`) +
         `</g>`;
     }
     vp.innerHTML = s;
+    prevShown = new Set(shown.map((n) => n.id));
     applyT();
     visibleEl.textContent = shown.length.toLocaleString() + " nodes shown";
   }
@@ -457,20 +487,32 @@
     clearTimeout(qt);
     qt = setTimeout(() => runSearch(e.target.value.trim().toLowerCase()), 160);
   });
+  // Escape clears the search and hands the map back — one keystroke to undo.
+  searchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && searchInput.value) {
+      e.stopPropagation();
+      searchInput.value = "";
+      runSearch("");
+    }
+  });
 
   // Search opens the path to every match (ancestors get expanded) and dims
-  // everything else.
+  // everything else. The badge in the search box reports how many nodes
+  // actually matched (ancestors opened along the way don't count).
   function runSearch(q) {
     if (!root) return;
     if (!q) {
       matchSet = null;
+      matchCountEl.hidden = true;
       render();
       return;
     }
     matchSet = new Set();
+    let hits = 0;
     (function walk(n, anc) {
       const hay = (n.name + " " + (n.path || "")).toLowerCase();
       if (hay.includes(q)) {
+        hits++;
         matchSet.add(n);
         for (const a of anc) {
           matchSet.add(a);
@@ -480,7 +522,13 @@
       const next = anc.concat(n);
       for (const c of n.children) walk(c, next);
     })(root, []);
+    matchCountEl.hidden = false;
+    matchCountEl.textContent = hits === 0 ? "no matches" : hits.toLocaleString() + (hits === 1 ? " match" : " matches");
+    matchCountEl.classList.toggle("none", hits === 0);
     render();
+    // Matches may have opened branches far outside the viewport — bring
+    // every lit-up path on screen so "found" is something you can SEE.
+    if (hits > 0) fit();
   }
 
   let drag = null;
@@ -522,6 +570,22 @@
     downId = null;
   });
 
+  // Keyboard: Enter or Space on a focused node behaves exactly like a click.
+  // render() rebuilds the SVG, so focus is put back on the same node after.
+  svg.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const g = e.target.closest ? e.target.closest(".cm-node") : null;
+    if (!g) return;
+    e.preventDefault();
+    const n = byId[g.dataset.id];
+    if (!n) return;
+    toggleNode(n);
+    showDetail(n);
+    render();
+    const again = vp.querySelector(`[data-id="${n.id}"]`);
+    if (again) again.focus();
+  });
+
   wrap.addEventListener(
     "wheel",
     (e) => {
@@ -555,7 +619,8 @@
       if (n.y < minY) minY = n.y;
       if (n.y > maxY) maxY = n.y;
     }
-    minX -= 40; maxX += 260; minY -= 30; maxY += 30;
+    // Left padding covers the left-anchored labels of expanded parents.
+    minX -= 250; maxX += 260; minY -= 30; maxY += 30;
     const r = svg.getBoundingClientRect();
     if (!r.width || !r.height) return; // pane not visible yet
     const k = Math.min(2, Math.max(0.1, Math.min(r.width / (maxX - minX), r.height / (maxY - minY))));
@@ -622,7 +687,7 @@
     {
       title: "Domains — what the code is about",
       body:
-        `<p>${sw("var(--accent)")}${sw("#7cc4a4")}${sw("#b98bd9")} The colored circles you ` +
+        `<p>${sw("#5b8def")}${sw("#7cc4a4")}${sw("#b98bd9")} The colored circles you ` +
         `see first are <strong>domains</strong>. A domain is one area of what the software ` +
         `<em>does</em> — think “Billing”, “Catalog”, or “Identity” (in design jargon: a ` +
         `<em>bounded context</em>).</p>` +
@@ -682,6 +747,7 @@
   const tourSkip = document.getElementById("cm-tour-skip");
   let tourStep = 0;
   let tourTarget = null; // currently highlighted element
+  let tourReturnFocus = null; // element to hand focus back to on close
 
   function tourSeen() {
     try {
@@ -721,6 +787,7 @@
   function tourOpen(force) {
     if (!force && tourSeen()) return;
     if (!tourEl.classList.contains("hidden")) return; // already showing
+    tourReturnFocus = document.activeElement;
     tourShowStep(0);
     tourEl.classList.remove("hidden");
     tourNext.focus();
@@ -731,6 +798,12 @@
     tourEl.classList.add("hidden");
     tourHighlight(null);
     tourRemember();
+    // Keyboard users land back where they were (usually the "?" button).
+    if (tourReturnFocus && typeof tourReturnFocus.focus === "function" &&
+        document.contains(tourReturnFocus)) {
+      tourReturnFocus.focus();
+    }
+    tourReturnFocus = null;
   }
 
   tourNext.addEventListener("click", () => {
@@ -748,8 +821,31 @@
     if (e.key === "Escape") tourClose();
     else if (e.key === "ArrowRight") tourNext.click();
     else if (e.key === "ArrowLeft" && tourStep > 0) tourShowStep(tourStep - 1);
+    else if (e.key === "Tab") {
+      // Modal focus trap: Tab cycles the dialog's visible buttons only.
+      const cycle = [tourSkip, tourBack, tourNext].filter(
+        (b) => b.style.visibility !== "hidden"
+      );
+      const i = cycle.indexOf(document.activeElement);
+      e.preventDefault();
+      const j = e.shiftKey
+        ? (i <= 0 ? cycle.length - 1 : i - 1)
+        : (i === cycle.length - 1 ? 0 : i + 1);
+      cycle[j].focus();
+    }
   });
   document.getElementById("cm-help").addEventListener("click", () => tourOpen(true));
+
+  // Expert shortcut: "/" jumps to the search box (like GitHub / Slack).
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "/") return;
+    if (!document.body.classList.contains("codemap-mode")) return;
+    if (!tourEl.classList.contains("hidden")) return;
+    const t = document.activeElement && document.activeElement.tagName;
+    if (t === "INPUT" || t === "TEXTAREA") return;
+    e.preventDefault();
+    searchInput.focus();
+  });
 
   /* ====================================================================
    * Public API — app.js drives mode switching through this
@@ -764,9 +860,11 @@
       setDepth(1);
       selectedId = null;
       matchSet = null;
+      prevShown = new Set(); // fresh graph: first paint arrives without fades
       searchInput.value = "";
+      matchCountEl.hidden = true;
       detail.classList.add("empty");
-      detail.textContent = "select a node to inspect";
+      detail.innerHTML = EMPTY_DETAIL;
       document
         .querySelectorAll("#cm-levels button")
         .forEach((x) => x.setAttribute("aria-pressed", x.dataset.d === "1" ? "true" : "false"));
@@ -782,9 +880,13 @@
     clear() {
       root = null;
       byId = {};
+      prevShown = new Set();
       vp.innerHTML = "";
       statsEl.innerHTML = "";
       visibleEl.textContent = "";
+      matchCountEl.hidden = true;
+      detail.classList.add("empty");
+      detail.innerHTML = EMPTY_DETAIL;
     },
   };
 })();

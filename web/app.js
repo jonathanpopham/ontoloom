@@ -96,7 +96,8 @@ function toast(message, kind = "") {
   toastEl.textContent = message;
   toastEl.className = "toast " + kind;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toastEl.classList.add("hidden"), 2400);
+  // Errors linger longer — analyzer diagnostics take a moment to read.
+  toastTimer = setTimeout(() => toastEl.classList.add("hidden"), kind === "bad" ? 6000 : 2400);
 }
 
 function setStatus(text) {
@@ -799,7 +800,75 @@ exportMenu.querySelectorAll("button").forEach((b) => {
     exportAs(b.dataset.format);
   });
 });
-document.addEventListener("click", () => exportMenu.classList.add("hidden"));
+document.addEventListener("click", () => {
+  exportMenu.classList.add("hidden");
+  analyzeMenu.classList.add("hidden");
+});
+
+/* ---- Analyze a repository (gs-H4) ----
+ * POSTs a local path to /api/analyze; the Rust server shells to the local
+ * TrailTracker binary and returns the repo as a hierarchy graph, which
+ * loadGraph() then auto-opens in code-map mode. Loopback-only, airgapped —
+ * the analyzer is a local executable and nothing leaves the machine. */
+const analyzeBtn = document.getElementById("btn-analyze");
+const analyzeMenu = document.getElementById("analyze-menu");
+const analyzePathEl = document.getElementById("analyze-path");
+const analyzeGo = document.getElementById("analyze-go");
+
+analyzeBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  exportMenu.classList.add("hidden");
+  analyzeMenu.classList.toggle("hidden");
+  if (!analyzeMenu.classList.contains("hidden")) analyzePathEl.focus();
+});
+// Clicks inside the panel (typing, selecting text) must not close it.
+analyzeMenu.addEventListener("click", (e) => e.stopPropagation());
+analyzePathEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") runAnalyze();
+  else if (e.key === "Escape") analyzeMenu.classList.add("hidden");
+});
+analyzeGo.addEventListener("click", runAnalyze);
+
+let analyzing = false;
+async function runAnalyze() {
+  const path = analyzePathEl.value.trim();
+  if (!path) {
+    toast("Enter the path to a repository first.", "bad");
+    analyzePathEl.focus();
+    return;
+  }
+  if (analyzing) return;
+  analyzing = true;
+  analyzeGo.disabled = true;
+  analyzeGo.textContent = "Analyzing…";
+  setStatus("Analyzing " + path + " — running TrailTracker locally…");
+  try {
+    const res = await fetch("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    if (!res.ok) {
+      // The server sends a specific, human-readable reason: bad path,
+      // missing binary, or the analyzer's own diagnostic.
+      toast(await res.text(), "bad");
+      setStatus("Ready.");
+      return;
+    }
+    const data = await res.json();
+    analyzeMenu.classList.add("hidden");
+    loadGraph(data); // hierarchy graphs auto-enter the code map
+    scheduleSave();
+    toast("Analyzed " + path, "good");
+  } catch (e) {
+    toast("Analyze failed: " + e.message, "bad");
+    setStatus("Ready.");
+  } finally {
+    analyzing = false;
+    analyzeGo.disabled = false;
+    analyzeGo.textContent = "Analyze";
+  }
+}
 
 document.getElementById("btn-clear").addEventListener("click", () => {
   if (state.nodes.length === 0 || confirm("Clear the entire canvas? This cannot be undone.")) {

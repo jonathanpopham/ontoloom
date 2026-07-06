@@ -159,6 +159,7 @@ fn route(req: &Request, config: &Config) -> Response {
             handle_export(req, format)
         }
         ("POST", "/api/import") => handle_import(req),
+        ("POST", "/api/analyze") => handle_analyze(req),
         _ => Response::text("404 Not Found", "not found"),
     }
 }
@@ -262,6 +263,139 @@ fn handle_import(req: &Request) -> Response {
     }
 }
 
+/// `POST /api/analyze` with `{"path": "/path/to/repo"}` — run the local
+/// TrailTracker binary against a repository and return the resulting
+/// hierarchy graph as Ontoloom wire JSON. Everything stays on this machine:
+/// the analyzer is a local executable and its output never leaves loopback,
+/// so the airgap guarantee holds.
+fn handle_analyze(req: &Request) -> Response {
+    let body = match std::str::from_utf8(&req.body) {
+        Ok(b) => b,
+        Err(_) => return Response::text("400 Bad Request", "body is not valid UTF-8"),
+    };
+    let parsed = match parse(body) {
+        Ok(p) => p,
+        Err(e) => return Response::text("400 Bad Request", &format!("invalid JSON: {}", e)),
+    };
+    let raw_path = match parsed.get_str("path").map(str::trim) {
+        Some(p) if !p.is_empty() => p,
+        _ => {
+            return Response::text(
+                "400 Bad Request",
+                "missing \"path\" — send {\"path\": \"/path/to/repository\"}",
+            )
+        }
+    };
+    let repo = expand_tilde(raw_path);
+    match std::fs::metadata(&repo) {
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => {
+            return Response::text(
+                "400 Bad Request",
+                &format!(
+                    "'{}' is a file, not a directory — point at a repository root",
+                    repo.display()
+                ),
+            )
+        }
+        Err(_) => {
+            return Response::text(
+                "400 Bad Request",
+                &format!("path '{}' does not exist on this machine", repo.display()),
+            )
+        }
+    }
+
+    let bin = match trailtracker_bin() {
+        Some(b) => b,
+        None => {
+            return Response::text(
+                "500 Internal Server Error",
+                "TrailTracker binary not found — set the TRAILTRACKER_BIN environment \
+                 variable, or build it: cd ~/geist/trailtracker && cargo build --release",
+            )
+        }
+    };
+
+    let output = match std::process::Command::new(&bin)
+        .arg("export")
+        .arg("ontoloom")
+        .arg(&repo)
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            return Response::text(
+                "500 Internal Server Error",
+                &format!("could not run {}: {}", bin.display(), e),
+            )
+        }
+    };
+
+    if !output.status.success() {
+        // TrailTracker prints a human-readable diagnostic (plus a `fix:` hint)
+        // to stderr; pass that straight through to the UI.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let msg = stderr.trim();
+        let msg = if msg.is_empty() {
+            format!("analysis failed (exit status {})", output.status)
+        } else {
+            format!("analysis failed: {}", msg)
+        };
+        return Response::text("422 Unprocessable Entity", &msg);
+    }
+
+    let wire = match String::from_utf8(output.stdout) {
+        Ok(w) => w,
+        Err(_) => {
+            return Response::text(
+                "500 Internal Server Error",
+                "analyzer produced non-UTF-8 output",
+            )
+        }
+    };
+    // Validate before handing it to the UI, exactly like /api/import does.
+    match parse(&wire).and_then(|v| Graph::from_wire(&v).map(|_| ())) {
+        Ok(()) => Response::json("200 OK", wire),
+        Err(e) => Response::text(
+            "500 Internal Server Error",
+            &format!("analyzer output is not a valid Ontoloom graph: {}", e),
+        ),
+    }
+}
+
+/// Locate the TrailTracker executable: the `TRAILTRACKER_BIN` env var wins
+/// (and, when set, is authoritative — a wrong value is reported rather than
+/// silently falling back), else the conventional release-build path under the
+/// user's home directory.
+fn trailtracker_bin() -> Option<PathBuf> {
+    if let Ok(configured) = std::env::var("TRAILTRACKER_BIN") {
+        let p = expand_tilde(configured.trim());
+        return if p.is_file() { Some(p) } else { None };
+    }
+    let home = std::env::var("HOME").ok()?;
+    let p = PathBuf::from(home).join("geist/trailtracker/target/release/trailtracker");
+    if p.is_file() {
+        Some(p)
+    } else {
+        None
+    }
+}
+
+/// Expand a leading `~` / `~/` to the user's home directory so paths typed
+/// into the browser behave like they would in a shell.
+fn expand_tilde(path: &str) -> PathBuf {
+    if let Ok(home) = std::env::var("HOME") {
+        if path == "~" {
+            return PathBuf::from(home);
+        }
+        if let Some(rest) = path.strip_prefix("~/") {
+            return PathBuf::from(home).join(rest);
+        }
+    }
+    PathBuf::from(path)
+}
+
 /// Extract and percent-decode a query parameter from a request path.
 fn query_param(path: &str, key: &str) -> Option<String> {
     let query = path.split('?').nth(1)?;
@@ -318,6 +452,123 @@ fn percent_decode(s: &str) -> String {
         }
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn post(path: &str, body: &str) -> Request {
+        Request {
+            method: "POST".to_string(),
+            path: path.to_string(),
+            body: body.as_bytes().to_vec(),
+        }
+    }
+
+    fn test_config() -> Config {
+        Config {
+            data_path: std::env::temp_dir().join("ontoloom-server-test-graph.json"),
+        }
+    }
+
+    #[test]
+    fn analyze_rejects_invalid_json() {
+        let resp = route(&post("/api/analyze", "this is not json"), &test_config());
+        assert_eq!(resp.status, "400 Bad Request");
+        let msg = String::from_utf8(resp.body).unwrap();
+        assert!(msg.contains("invalid JSON"), "got: {}", msg);
+    }
+
+    #[test]
+    fn analyze_rejects_missing_path_field() {
+        let resp = route(&post("/api/analyze", "{}"), &test_config());
+        assert_eq!(resp.status, "400 Bad Request");
+        let msg = String::from_utf8(resp.body).unwrap();
+        assert!(msg.contains("\"path\""), "got: {}", msg);
+    }
+
+    #[test]
+    fn analyze_rejects_blank_path() {
+        let resp = route(&post("/api/analyze", "{\"path\": \"   \"}"), &test_config());
+        assert_eq!(resp.status, "400 Bad Request");
+    }
+
+    #[test]
+    fn analyze_rejects_nonexistent_path() {
+        let resp = route(
+            &post("/api/analyze", "{\"path\": \"/definitely/not/a/real/repo\"}"),
+            &test_config(),
+        );
+        assert_eq!(resp.status, "400 Bad Request");
+        let msg = String::from_utf8(resp.body).unwrap();
+        assert!(msg.contains("does not exist"), "got: {}", msg);
+    }
+
+    #[test]
+    fn analyze_rejects_file_path() {
+        // Point it at a file (this source file) instead of a directory.
+        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/server.rs");
+        let resp = route(
+            &post(
+                "/api/analyze",
+                &format!("{{\"path\": \"{}\"}}", file.display()),
+            ),
+            &test_config(),
+        );
+        assert_eq!(resp.status, "400 Bad Request");
+        let msg = String::from_utf8(resp.body).unwrap();
+        assert!(msg.contains("not a directory"), "got: {}", msg);
+    }
+
+    #[test]
+    fn expand_tilde_handles_home_prefix() {
+        if let Ok(home) = std::env::var("HOME") {
+            assert_eq!(expand_tilde("~"), PathBuf::from(&home));
+            assert_eq!(expand_tilde("~/x/y"), PathBuf::from(&home).join("x/y"));
+        }
+        assert_eq!(expand_tilde("/abs/path"), PathBuf::from("/abs/path"));
+        // "~user" forms are not expanded — they pass through untouched.
+        assert_eq!(expand_tilde("~other/x"), PathBuf::from("~other/x"));
+    }
+
+    /// End-to-end through the real TrailTracker binary, when present. On
+    /// machines without the binary (or the eval corpus) this quietly skips —
+    /// CI stays green either way.
+    #[test]
+    fn analyze_runs_trailtracker_on_calc_corpus_when_available() {
+        let Some(bin) = trailtracker_bin() else {
+            eprintln!("skipping: TrailTracker binary not found");
+            return;
+        };
+        let corpus = expand_tilde("~/geist/trailtracker/eval/corpus/calc");
+        if !corpus.is_dir() {
+            eprintln!("skipping: calc corpus not found at {}", corpus.display());
+            return;
+        }
+        let resp = route(
+            &post(
+                "/api/analyze",
+                &format!("{{\"path\": \"{}\"}}", corpus.display()),
+            ),
+            &test_config(),
+        );
+        assert_eq!(
+            resp.status,
+            "200 OK",
+            "analyze via {} failed: {}",
+            bin.display(),
+            String::from_utf8_lossy(&resp.body)
+        );
+        let wire = String::from_utf8(resp.body).unwrap();
+        // The response must be a loadable Ontoloom graph that the code map
+        // will recognize as a hierarchy.
+        let graph = parse(&wire)
+            .and_then(|v| Graph::from_wire(&v))
+            .expect("analyzer output round-trips through the graph model");
+        assert!(!graph.nodes.is_empty(), "expected a non-empty graph");
+        assert!(wire.contains("\"view\":\"hierarchy\""), "expected hierarchy markers");
+    }
 }
 
 fn write_response(writer: &mut TcpStream, response: Response) -> std::io::Result<()> {

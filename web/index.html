@@ -45,6 +45,17 @@
         </div>
       </div>
       <span class="divider"></span>
+      <div class="analyze-group">
+        <button id="btn-analyze" class="tool"
+                title="Point Ontoloom at a local repository — TrailTracker maps it into a drillable code map">⚡ Analyze repo</button>
+        <div id="analyze-menu" class="menu analyze-menu hidden">
+          <label for="analyze-path">Repository path on this machine</label>
+          <input id="analyze-path" type="text" placeholder="/path/to/repo  or  ~/code/myproject"
+                 spellcheck="false" autocomplete="off" aria-label="Repository path" />
+          <button id="analyze-go" class="tool primary">Analyze</button>
+          <div class="analyze-hint">Runs the local TrailTracker analyzer and opens the result as a code map. Nothing leaves this machine.</div>
+        </div>
+      </div>
       <button id="btn-import" class="tool" title="Import JSON, JSONL, Cypher, or GraphML">📂 Import</button>
       <button id="btn-clear" class="tool danger" title="Clear the whole canvas">✕ Clear</button>
       <input id="file-input" type="file" accept=".json,.jsonl,.ndjson,.cypher,.cql,.graphml,.xml" hidden />
@@ -97,6 +108,7 @@
         <input id="cm-search" type="search" placeholder="find symbol / file…"
                autocomplete="off" aria-label="Search the code map" />
         <button id="cm-fit" class="tool">Fit</button>
+        <button id="cm-help" class="tool" title="What am I looking at? Replay the code-map tour">?</button>
         <span id="cm-visible" class="cm-visible"></span>
       </div>
       <div id="cm-wrap" class="cm-wrap">
@@ -117,6 +129,24 @@
     </div>
     <aside id="cm-detail" class="cm-detail empty">select a node to inspect</aside>
   </main>
+
+  <!-- First-run walkthrough for the code map. Steps are defined in codemap.js;
+       dismissal is remembered in localStorage. Vanilla JS/CSS, airgap-safe. -->
+  <div id="cm-tour" class="cm-tour hidden" role="dialog" aria-modal="true" aria-labelledby="cm-tour-title">
+    <div class="cm-tour-card">
+      <div class="cm-tour-kicker">Code map tour</div>
+      <h3 id="cm-tour-title"></h3>
+      <div id="cm-tour-body" class="cm-tour-body"></div>
+      <div class="cm-tour-foot">
+        <div id="cm-tour-dots" class="cm-tour-dots" aria-hidden="true"></div>
+        <div class="cm-tour-nav">
+          <button id="cm-tour-skip" class="tool">Skip</button>
+          <button id="cm-tour-back" class="tool">‹ Back</button>
+          <button id="cm-tour-next" class="tool primary">Next ›</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div id="status" class="status-bar">
     <span id="status-text">Ready.</span>

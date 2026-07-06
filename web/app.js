@@ -188,14 +188,67 @@ function select(kind, id) {
 }
 
 /* ======================================================================
+ * Code map mode (gs-H5 big-graph rendering + gs-H2 lazy expand)
+ *
+ * When the loaded graph is a TrailTracker-style code hierarchy (nodes carry
+ * properties.view === "hierarchy" plus a domain/unit/file/symbol level and
+ * CONTAINS edges), a "Code map" toggle appears and the drill-down viewer in
+ * codemap.js takes over rendering. The manual editor is untouched: the same
+ * state.nodes / state.rels back both modes, and switching is lossless.
+ * ==================================================================== */
+const modeBtn = document.getElementById("btn-mode");
+
+function isCodeMapActive() {
+  return document.body.classList.contains("codemap-mode");
+}
+
+function setUiMode(mode) {
+  const active = mode === "codemap";
+  document.body.classList.toggle("codemap-mode", active);
+  document.getElementById("editor").classList.toggle("hidden", active);
+  document.getElementById("codemap").classList.toggle("hidden", !active);
+  modeBtn.textContent = active ? "✎ Editor" : "⌗ Code map";
+  if (active) {
+    window.CodeMap.load(state.name, state.nodes, state.rels);
+    setStatus("Code map: click a node to drill in. Level buttons expand to a depth.");
+  } else {
+    render(); // rebuild the editor DOM that was skipped while hidden
+    setStatus("Ready.");
+  }
+}
+
+// Called after every graph (re)load: show or hide the toggle, and optionally
+// jump straight into the code map when a hierarchy arrives.
+function updateCodeMapMode(autoEnter) {
+  const isHierarchy = window.CodeMap && window.CodeMap.detect(state.nodes, state.rels);
+  modeBtn.classList.toggle("hidden", !isHierarchy);
+  if (isHierarchy && autoEnter) {
+    setUiMode("codemap");
+  } else if (!isHierarchy && isCodeMapActive()) {
+    window.CodeMap.clear();
+    setUiMode("editor");
+  } else if (isHierarchy && isCodeMapActive()) {
+    window.CodeMap.load(state.name, state.nodes, state.rels);
+  }
+}
+
+modeBtn.addEventListener("click", () => {
+  setUiMode(isCodeMapActive() ? "editor" : "codemap");
+});
+
+/* ======================================================================
  * Rendering
  * ==================================================================== */
 function render() {
+  countsEl.textContent = `${state.nodes.length} ideas · ${state.rels.length} links`;
+  // While the code map owns the screen, skip rebuilding the (hidden) editor
+  // DOM — that is what keeps a 20k-node repo from ever drawing as a
+  // hairball. The editor is rebuilt on demand when switching back.
+  if (isCodeMapActive()) return;
   applyView();
   renderEdges();
   renderNodes();
   renderInspector();
-  countsEl.textContent = `${state.nodes.length} ideas · ${state.rels.length} links`;
 }
 
 function renderNodes() {
@@ -629,6 +682,10 @@ function loadGraph(data) {
   state.relSeq = maxSeq(state.rels.map((r) => r.id), "r");
   state.selection = null;
   state.connectSource = null;
+  // Hierarchy graphs open in the code map; everything else stays in the
+  // editor. Must run before render() so a huge import never builds the full
+  // editor DOM first.
+  updateCodeMapMode(true);
   render();
 }
 
@@ -750,6 +807,7 @@ document.getElementById("btn-clear").addEventListener("click", () => {
     state.rels = [];
     state.selection = null;
     state.connectSource = null;
+    updateCodeMapMode(false); // an emptied graph is no hierarchy — back to the editor
     render();
     scheduleSave();
   }
@@ -789,6 +847,7 @@ fileInput.addEventListener("change", () => {
 window.addEventListener("keydown", (e) => {
   const typing = ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName);
   if (typing) return;
+  if (isCodeMapActive()) return; // editing shortcuts belong to the editor
   if (e.key === "Delete" || e.key === "Backspace") {
     e.preventDefault();
     deleteSelection();

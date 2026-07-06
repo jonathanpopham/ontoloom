@@ -138,6 +138,11 @@ fn route(req: &Request, config: &Config) -> Response {
             "application/javascript; charset=utf-8",
             assets::APP_JS.into(),
         ),
+        ("GET", "/codemap.js") => Response::new(
+            "200 OK",
+            "application/javascript; charset=utf-8",
+            assets::CODEMAP_JS.into(),
+        ),
         ("GET", "/style.css") => Response::new(
             "200 OK",
             "text/css; charset=utf-8",

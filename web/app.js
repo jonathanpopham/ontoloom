@@ -208,14 +208,40 @@ function setUiMode(mode) {
   document.body.classList.toggle("codemap-mode", active);
   document.getElementById("editor").classList.toggle("hidden", active);
   document.getElementById("codemap").classList.toggle("hidden", !active);
-  modeBtn.textContent = active ? "✎ Editor" : "⌗ Code map";
+  modeBtn.innerHTML = active
+    ? '<span aria-hidden="true">✎</span> Editor'
+    : '<span aria-hidden="true">⌗</span> Code map';
   if (active) {
     window.CodeMap.load(state.name, state.nodes, state.rels);
     setStatus("Code map: click a node to drill in. Level buttons expand to a depth.");
   } else {
+    fitEditorView(); // grid-laid imports would otherwise sit half off-screen
     render(); // rebuild the editor DOM that was skipped while hidden
     setStatus("Ready.");
   }
+}
+
+// Bring every node into view (used when the editor takes over from the code
+// map — imported graphs carry grid coordinates the current pan may not show).
+function fitEditorView() {
+  if (!state.nodes.length) return;
+  const rect = svg.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const n of state.nodes) {
+    if (n.x < minX) minX = n.x;
+    if (n.x > maxX) maxX = n.x;
+    if (n.y < minY) minY = n.y;
+    if (n.y > maxY) maxY = n.y;
+  }
+  minX -= 90; maxX += 90; minY -= 90; maxY += 90;
+  const scale = Math.min(
+    1.5,
+    Math.max(0.25, Math.min(rect.width / (maxX - minX), rect.height / (maxY - minY)))
+  );
+  state.view.scale = scale;
+  state.view.x = (rect.width - (maxX + minX) * scale) / 2;
+  state.view.y = (rect.height - (maxY + minY) * scale) / 2;
 }
 
 // Called after every graph (re)load: show or hide the toggle, and optionally
@@ -241,7 +267,11 @@ modeBtn.addEventListener("click", () => {
  * Rendering
  * ==================================================================== */
 function render() {
-  countsEl.textContent = `${state.nodes.length} ideas · ${state.rels.length} links`;
+  // The status bar speaks each mode's language: ideas/links in the editor,
+  // nodes/relationships over a code map.
+  countsEl.textContent = isCodeMapActive()
+    ? `${state.nodes.length} nodes · ${state.rels.length} relationships`
+    : `${state.nodes.length} ideas · ${state.rels.length} links`;
   // While the code map owns the screen, skip rebuilding the (hidden) editor
   // DOM — that is what keeps a 20k-node repo from ever drawing as a
   // hairball. The editor is rebuilt on demand when switching back.
@@ -775,6 +805,7 @@ connectBtn.addEventListener("click", () => {
   state.mode = state.mode === "connect" ? "select" : "connect";
   state.connectSource = null;
   connectBtn.classList.toggle("active", state.mode === "connect");
+  connectBtn.setAttribute("aria-pressed", String(state.mode === "connect"));
   svg.classList.toggle("connecting", state.mode === "connect");
   setStatus(
     state.mode === "connect"
@@ -790,20 +821,31 @@ document.getElementById("btn-load").addEventListener("click", loadFromServer);
 
 const exportBtn = document.getElementById("btn-export");
 const exportMenu = document.getElementById("export-menu");
+
+// Keep each popup trigger's aria-expanded truthful, whichever path closed it.
+function syncMenus() {
+  exportBtn.setAttribute("aria-expanded", String(!exportMenu.classList.contains("hidden")));
+  analyzeBtn.setAttribute("aria-expanded", String(!analyzeMenu.classList.contains("hidden")));
+}
+function closeMenus() {
+  exportMenu.classList.add("hidden");
+  analyzeMenu.classList.add("hidden");
+  syncMenus();
+}
+
 exportBtn.addEventListener("click", (e) => {
   e.stopPropagation();
+  analyzeMenu.classList.add("hidden");
   exportMenu.classList.toggle("hidden");
+  syncMenus();
 });
 exportMenu.querySelectorAll("button").forEach((b) => {
   b.addEventListener("click", () => {
-    exportMenu.classList.add("hidden");
+    closeMenus();
     exportAs(b.dataset.format);
   });
 });
-document.addEventListener("click", () => {
-  exportMenu.classList.add("hidden");
-  analyzeMenu.classList.add("hidden");
-});
+document.addEventListener("click", closeMenus);
 
 /* ---- Analyze a repository (gs-H4) ----
  * POSTs a local path to /api/analyze; the Rust server shells to the local
@@ -819,15 +861,29 @@ analyzeBtn.addEventListener("click", (e) => {
   e.stopPropagation();
   exportMenu.classList.add("hidden");
   analyzeMenu.classList.toggle("hidden");
+  syncMenus();
   if (!analyzeMenu.classList.contains("hidden")) analyzePathEl.focus();
 });
 // Clicks inside the panel (typing, selecting text) must not close it.
 analyzeMenu.addEventListener("click", (e) => e.stopPropagation());
 analyzePathEl.addEventListener("keydown", (e) => {
   if (e.key === "Enter") runAnalyze();
-  else if (e.key === "Escape") analyzeMenu.classList.add("hidden");
+  else if (e.key === "Escape") {
+    closeMenus();
+    analyzeBtn.focus(); // hand focus back to the trigger, not the void
+  }
 });
 analyzeGo.addEventListener("click", runAnalyze);
+
+// Escape closes any open dropdown no matter what has focus (Nielsen #3:
+// user control & freedom). Runs on capture-independent bubble; menus that
+// are already closed make this a no-op.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!exportMenu.classList.contains("hidden") || !analyzeMenu.classList.contains("hidden")) {
+    closeMenus();
+  }
+});
 
 let analyzing = false;
 async function runAnalyze() {
@@ -840,6 +896,8 @@ async function runAnalyze() {
   if (analyzing) return;
   analyzing = true;
   analyzeGo.disabled = true;
+  analyzeGo.classList.add("busy");
+  analyzeGo.setAttribute("aria-busy", "true");
   analyzeGo.textContent = "Analyzing…";
   setStatus("Analyzing " + path + " — running TrailTracker locally…");
   try {
@@ -856,7 +914,7 @@ async function runAnalyze() {
       return;
     }
     const data = await res.json();
-    analyzeMenu.classList.add("hidden");
+    closeMenus();
     loadGraph(data); // hierarchy graphs auto-enter the code map
     scheduleSave();
     toast("Analyzed " + path, "good");
@@ -866,6 +924,8 @@ async function runAnalyze() {
   } finally {
     analyzing = false;
     analyzeGo.disabled = false;
+    analyzeGo.classList.remove("busy");
+    analyzeGo.removeAttribute("aria-busy");
     analyzeGo.textContent = "Analyze";
   }
 }

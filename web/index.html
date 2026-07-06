@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark light" />
   <title>Ontoloom — Ontology Builder</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="stylesheet" href="/style.css" />
@@ -27,16 +28,16 @@
 
 
     <div class="toolbar">
-      <button id="btn-mode" class="tool hidden" title="Switch between the code map and the manual editor">⌗ Code map</button>
-      <button id="btn-add" class="tool" title="Add an idea (or double-click the canvas)">＋ Add idea</button>
-      <button id="btn-connect" class="tool" title="Connect two ideas">⤳ Connect</button>
-      <button id="btn-delete" class="tool" title="Delete selected (Delete key)">🗑 Delete</button>
-      <span class="divider"></span>
-      <button id="btn-save" class="tool" title="Save to disk">💾 Save</button>
-      <button id="btn-load" class="tool" title="Reload from disk">↺ Reload</button>
-      <span class="divider"></span>
+      <button id="btn-mode" class="tool hidden" title="Switch between the code map and the manual editor"><span aria-hidden="true">⌗</span> Code map</button>
+      <button id="btn-add" class="tool" title="Add an idea (or double-click the canvas)"><span aria-hidden="true">＋</span> Add idea</button>
+      <button id="btn-connect" class="tool" title="Connect two ideas" aria-pressed="false"><span aria-hidden="true">⤳</span> Connect</button>
+      <button id="btn-delete" class="tool" title="Delete selected (Delete key)"><span aria-hidden="true">🗑</span> Delete</button>
+      <span class="divider" role="separator" aria-orientation="vertical"></span>
+      <button id="btn-save" class="tool" title="Save to disk"><span aria-hidden="true">💾</span> Save</button>
+      <button id="btn-load" class="tool" title="Reload from disk"><span aria-hidden="true">↺</span> Reload</button>
+      <span class="divider" role="separator" aria-orientation="vertical"></span>
       <div class="export-group">
-        <button id="btn-export" class="tool primary">⬇ Export ▾</button>
+        <button id="btn-export" class="tool primary" aria-haspopup="true" aria-expanded="false"><span aria-hidden="true">⬇</span> Export <span aria-hidden="true">▾</span></button>
         <div id="export-menu" class="menu hidden">
           <button data-format="jsonl">Neo4j JSONL <span class="hint">.jsonl</span></button>
           <button data-format="cypher">Cypher script <span class="hint">.cypher</span></button>
@@ -44,10 +45,10 @@
           <button data-format="graphml">GraphML <span class="hint">.graphml</span></button>
         </div>
       </div>
-      <span class="divider"></span>
+      <span class="divider" role="separator" aria-orientation="vertical"></span>
       <div class="analyze-group">
-        <button id="btn-analyze" class="tool"
-                title="Point Ontoloom at a local repository — TrailTracker maps it into a drillable code map">⚡ Analyze repo</button>
+        <button id="btn-analyze" class="tool" aria-haspopup="true" aria-expanded="false"
+                title="Point Ontoloom at a local repository — TrailTracker maps it into a drillable code map"><span aria-hidden="true">⚡</span> Analyze repo</button>
         <div id="analyze-menu" class="menu analyze-menu hidden">
           <label for="analyze-path">Repository path on this machine</label>
           <input id="analyze-path" type="text" placeholder="/path/to/repo  or  ~/code/myproject"
@@ -56,8 +57,8 @@
           <div class="analyze-hint">Runs the local TrailTracker analyzer and opens the result as a code map. Nothing leaves this machine.</div>
         </div>
       </div>
-      <button id="btn-import" class="tool" title="Import JSON, JSONL, Cypher, or GraphML">📂 Import</button>
-      <button id="btn-clear" class="tool danger" title="Clear the whole canvas">✕ Clear</button>
+      <button id="btn-import" class="tool" title="Import JSON, JSONL, Cypher, or GraphML"><span aria-hidden="true">📂</span> Import</button>
+      <button id="btn-clear" class="tool danger" title="Clear the whole canvas"><span aria-hidden="true">✕</span> Clear</button>
       <input id="file-input" type="file" accept=".json,.jsonl,.ndjson,.cypher,.cql,.graphml,.xml" hidden />
     </div>
   </header>
@@ -78,7 +79,7 @@
       </g>
     </svg>
 
-    <aside id="inspector" class="inspector empty">
+    <aside id="inspector" class="inspector empty" aria-label="Selection inspector">
       <div class="inspector-empty-msg">
         <h2>Nothing selected</h2>
         <p>Double-click the canvas to add an idea. Click an idea or a link to edit it here.</p>
@@ -105,17 +106,24 @@
           <button data-d="3" aria-pressed="false">Files</button>
           <button data-d="4" aria-pressed="false">Symbols</button>
         </div>
-        <input id="cm-search" type="search" placeholder="find symbol / file…"
-               autocomplete="off" aria-label="Search the code map" />
-        <button id="cm-fit" class="tool">Fit</button>
-        <button id="cm-help" class="tool" title="What am I looking at? Replay the code-map tour">?</button>
-        <span id="cm-visible" class="cm-visible"></span>
+        <div class="cm-search-wrap">
+          <input id="cm-search" type="search" placeholder="find symbol / file…"
+                 autocomplete="off" aria-label="Search the code map"
+                 title="Search the code map — press / to jump here, Escape to clear" />
+          <span id="cm-match-count" class="cm-match-count" aria-live="polite" hidden></span>
+        </div>
+        <button id="cm-fit" class="tool" title="Recenter and zoom the map to fit everything shown">Fit</button>
+        <button id="cm-help" class="tool" aria-label="Replay the code-map tour"
+                title="What am I looking at? Replay the code-map tour">?</button>
+        <span id="cm-visible" class="cm-visible" aria-live="polite"></span>
       </div>
       <div id="cm-wrap" class="cm-wrap">
         <svg id="cm-svg"><g id="cm-viewport"></g></svg>
         <div class="cm-legend">
           <h4>Levels &amp; kinds</h4>
-          <div class="row"><span class="sw" style="background:var(--accent)"></span>domain</div>
+          <div class="row">
+            <span class="sw" style="background:#5b8def"></span><span class="sw half" style="background:#7cc4a4"></span><span class="sw half" style="background:#b98bd9"></span>domain
+          </div>
           <div class="row"><span class="sw" style="background:var(--cm-unit)"></span>unit</div>
           <div class="row"><span class="sw" style="background:var(--cm-file)"></span>file</div>
           <div class="row">
@@ -127,7 +135,7 @@
         </div>
       </div>
     </div>
-    <aside id="cm-detail" class="cm-detail empty">select a node to inspect</aside>
+    <aside id="cm-detail" class="cm-detail empty" aria-label="Node inspector"><div class="empty-hint"><span class="glyph" aria-hidden="true">◎</span>click a node to expand it and inspect it here</div></aside>
   </main>
 
   <!-- First-run walkthrough for the code map. Steps are defined in codemap.js;
@@ -149,11 +157,11 @@
   </div>
 
   <div id="status" class="status-bar">
-    <span id="status-text">Ready.</span>
+    <span id="status-text" role="status" aria-live="polite">Ready.</span>
     <span id="counts" class="counts"></span>
   </div>
 
-  <div id="toast" class="toast hidden"></div>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
   <script src="/codemap.js"></script>
   <script src="/app.js"></script>

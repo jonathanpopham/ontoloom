@@ -148,6 +148,35 @@ body {
 .menu button:hover { background: var(--accent-soft); }
 .menu .hint { color: var(--text-faint); font-family: var(--mono); font-size: 11px; }
 
+/* ---- Analyze-a-repository panel ---- */
+.analyze-group { position: relative; }
+.analyze-menu {
+  min-width: 330px;
+  padding: 12px;
+  gap: 8px;
+  cursor: default;
+}
+.analyze-menu label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-faint);
+}
+.analyze-menu input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 8px 10px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.analyze-menu input:focus { outline: none; border-color: var(--accent); }
+.analyze-menu .tool.primary { width: 100%; padding: 8px; }
+.analyze-menu .tool.primary:disabled { opacity: 0.6; cursor: progress; }
+.analyze-hint { color: var(--text-faint); font-size: 11px; line-height: 1.45; }
+
 /* ---- Workspace ---- */
 .workspace {
   flex: 1 1 auto;
@@ -561,3 +590,87 @@ body.codemap-mode #btn-clear { display: none; }
 }
 .cm-detail .fact span { color: var(--text-faint); font-family: var(--mono); font-size: 11px; }
 .cm-detail .fact b { font-weight: 500; word-break: break-word; text-align: right; }
+
+/* ======================================================================
+ * Code map first-run walkthrough (gs-H3)
+ * ==================================================================== */
+.cm-tour {
+  position: fixed;
+  inset: 0;
+  z-index: 90; /* below the toast (100), above everything else */
+  background: rgba(8, 11, 20, 0.62);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.cm-tour.hidden { display: none; }
+
+.cm-tour-card {
+  width: min(480px, 92vw);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 20px 22px 16px;
+}
+.cm-tour-kicker {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--accent);
+}
+.cm-tour-card h3 {
+  margin: 8px 0 4px;
+  font-size: 17px;
+  letter-spacing: 0.2px;
+}
+.cm-tour-body { color: var(--text-dim); font-size: 13.5px; line-height: 1.6; }
+.cm-tour-body p { margin: 10px 0; }
+.cm-tour-body strong { color: var(--text); }
+.cm-tour-body code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.cm-tour-body .tsw {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  margin: 0 3px -1px 0;
+  vertical-align: baseline;
+}
+
+.cm-tour-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+}
+.cm-tour-dots { display: flex; gap: 6px; }
+.cm-tour-dots i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: background 0.15s;
+}
+.cm-tour-dots i.on { background: var(--accent); }
+.cm-tour-nav { display: flex; gap: 6px; }
+
+/* The step's featured UI element pops above the dimmed backdrop. */
+.cm-tour-hilite {
+  position: relative;
+  z-index: 95;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 18px rgba(91, 141, 239, 0.55);
+  border-radius: 8px;
+}
+.cm-legend.cm-tour-hilite { position: absolute; } /* keep its corner anchoring */

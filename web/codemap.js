@@ -258,13 +258,16 @@
     layout(root);
     const shown = [];
     const edges = [];
+    // Parents are pushed BEFORE their children so deeper nodes paint later
+    // (on top). A parent's wide hit-rect can reach into the next column;
+    // painting children above it keeps their dots clickable.
     (function collect(n) {
+      shown.push(n);
       const kids = n._collapsed || !n.children.length ? [] : n.children;
       for (const k of kids) {
         edges.push([n, k]);
         collect(k);
       }
-      shown.push(n);
     })(root);
 
     let s = "";
@@ -552,6 +555,163 @@
   }
 
   /* ====================================================================
+   * First-run walkthrough (gs-H3)
+   *
+   * A short dismissible tour that names every concept on screen — Domain,
+   * Unit, File, Symbol, archetype/layer — and shows how to move around.
+   * Written for someone with zero prior context. Dismissal (skip OR finish)
+   * is remembered in localStorage; the "?" button in the bar replays it.
+   * Vanilla JS/CSS only — no external libraries, airgap-safe.
+   * ================================================================== */
+  const TOUR_KEY = "ontoloom.cmTourDone";
+
+  function sw(color) {
+    return `<span class="tsw" style="background:${color}"></span>`;
+  }
+
+  const TOUR_STEPS = [
+    {
+      title: "This is a code map",
+      body:
+        `<p>Ontoloom recognized this graph as a <strong>codebase</strong>, so it opened ` +
+        `the code map: a drill-down view of the repository's structure, from the big ` +
+        `picture down to a single function.</p>` +
+        `<p>Everything starts folded up so even a huge repo reads as a handful of ` +
+        `circles. The next few steps name each thing you'll see.</p>`,
+    },
+    {
+      title: "Domains — what the code is about",
+      body:
+        `<p>${sw("var(--accent)")}${sw("#7cc4a4")}${sw("#b98bd9")} The colored circles you ` +
+        `see first are <strong>domains</strong>. A domain is one area of what the software ` +
+        `<em>does</em> — think “Billing”, “Catalog”, or “Identity” (in design jargon: a ` +
+        `<em>bounded context</em>).</p>` +
+        `<p>Domains group code by purpose, not by folder — each gets its own color so ` +
+        `you can tell them apart anywhere in the map.</p>`,
+    },
+    {
+      title: "Units — the buildable pieces",
+      body:
+        `<p>${sw("var(--cm-unit)")} Open a domain and you'll find its <strong>units</strong>. ` +
+        `A unit is one buildable project or package: a <code>.csproj</code> in C#, a Cargo ` +
+        `crate in Rust, a <code>package.json</code> in JavaScript.</p>` +
+        `<p>When people say “project” loosely, <em>this</em> is what the map means by it. ` +
+        `One domain can span several units, and one unit can serve several domains.</p>`,
+    },
+    {
+      title: "Files & symbols — down to the code",
+      body:
+        `<p>${sw("var(--cm-file)")} Inside a unit are its <strong>files</strong> — the actual ` +
+        `source files, shown with their path.</p>` +
+        `<p>Inside a file are its <strong>symbols</strong> — the things declared in the code, ` +
+        `in line order: ${sw("var(--cm-func)")} functions, ${sw("var(--cm-type)")} types, ` +
+        `and ${sw("var(--cm-const)")} constants.</p>`,
+    },
+    {
+      title: "Archetype & layer — each node's role",
+      body:
+        `<p>Click any node and the panel on the right shows its <strong>facts</strong>. Two ` +
+        `are worth knowing:</p>` +
+        `<p><strong>Archetype</strong> — the role a symbol plays in the architecture, like ` +
+        `Controller or Repository (<em>Unclassified</em> just means no known pattern ` +
+        `matched).</p>` +
+        `<p><strong>Layer</strong> — the architectural stratum its file sits in, like Domain, ` +
+        `Application, Infrastructure, or Shared. The legend in the corner recaps the ` +
+        `level colors.</p>`,
+      target: ".cm-legend",
+    },
+    {
+      title: "Getting around",
+      body:
+        `<p><strong>Click</strong> a node to expand its children; click it again to fold them ` +
+        `all away. The <strong>Domains / Units / Files / Symbols</strong> buttons expand the ` +
+        `whole map to that depth at once.</p>` +
+        `<p><strong>Search</strong> lights up matching files and symbols and opens the path to ` +
+        `them. <strong>Drag</strong> to pan, <strong>scroll</strong> to zoom, <strong>Fit</strong> to ` +
+        `recenter. Replay this tour any time with the <strong>?</strong> button.</p>`,
+      target: "#cm-levels",
+    },
+  ];
+
+  const tourEl = document.getElementById("cm-tour");
+  const tourTitle = document.getElementById("cm-tour-title");
+  const tourBody = document.getElementById("cm-tour-body");
+  const tourDots = document.getElementById("cm-tour-dots");
+  const tourBack = document.getElementById("cm-tour-back");
+  const tourNext = document.getElementById("cm-tour-next");
+  const tourSkip = document.getElementById("cm-tour-skip");
+  let tourStep = 0;
+  let tourTarget = null; // currently highlighted element
+
+  function tourSeen() {
+    try {
+      return localStorage.getItem(TOUR_KEY) === "1";
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function tourRemember() {
+    try {
+      localStorage.setItem(TOUR_KEY, "1");
+    } catch (_) { /* private mode etc. — the tour just shows again next time */ }
+  }
+
+  function tourHighlight(selector) {
+    if (tourTarget) tourTarget.classList.remove("cm-tour-hilite");
+    tourTarget = selector ? document.querySelector(selector) : null;
+    if (tourTarget) tourTarget.classList.add("cm-tour-hilite");
+  }
+
+  function tourShowStep(i) {
+    tourStep = Math.max(0, Math.min(TOUR_STEPS.length - 1, i));
+    const step = TOUR_STEPS[tourStep];
+    const last = tourStep === TOUR_STEPS.length - 1;
+    tourTitle.textContent = step.title;
+    tourBody.innerHTML = step.body;
+    tourBack.style.visibility = tourStep === 0 ? "hidden" : "visible";
+    tourNext.textContent = last ? "Done ✓" : "Next ›";
+    tourSkip.style.visibility = last ? "hidden" : "visible";
+    tourDots.innerHTML = TOUR_STEPS.map(
+      (_, d) => `<i class="${d === tourStep ? "on" : ""}"></i>`
+    ).join("");
+    tourHighlight(step.target);
+  }
+
+  function tourOpen(force) {
+    if (!force && tourSeen()) return;
+    if (!tourEl.classList.contains("hidden")) return; // already showing
+    tourShowStep(0);
+    tourEl.classList.remove("hidden");
+    tourNext.focus();
+  }
+
+  // Skipping and finishing both count as "seen" — the tour never nags.
+  function tourClose() {
+    tourEl.classList.add("hidden");
+    tourHighlight(null);
+    tourRemember();
+  }
+
+  tourNext.addEventListener("click", () => {
+    if (tourStep >= TOUR_STEPS.length - 1) tourClose();
+    else tourShowStep(tourStep + 1);
+  });
+  tourBack.addEventListener("click", () => tourShowStep(tourStep - 1));
+  tourSkip.addEventListener("click", tourClose);
+  // Clicking the dimmed backdrop (not the card) also dismisses.
+  tourEl.addEventListener("click", (e) => {
+    if (e.target === tourEl) tourClose();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (tourEl.classList.contains("hidden")) return;
+    if (e.key === "Escape") tourClose();
+    else if (e.key === "ArrowRight") tourNext.click();
+    else if (e.key === "ArrowLeft" && tourStep > 0) tourShowStep(tourStep - 1);
+  });
+  document.getElementById("cm-help").addEventListener("click", () => tourOpen(true));
+
+  /* ====================================================================
    * Public API — app.js drives mode switching through this
    * ================================================================== */
   window.CodeMap = {
@@ -574,6 +734,9 @@
       render();
       // The pane may have just been unhidden; fit once it has a size.
       requestAnimationFrame(fit);
+      // First time someone ever sees a code map, explain what they're
+      // looking at. No-op once dismissed (localStorage).
+      tourOpen(false);
     },
 
     clear() {

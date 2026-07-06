@@ -879,6 +879,15 @@ body.codemap-mode #btn-clear { display: none; }
    of the ontology the CONTAINS tree can't show. */
 .cm-dep { fill: none; stroke: var(--accent); stroke-width: 1.1; stroke-dasharray: 5 4; opacity: 0.45; }
 .cm-dep-tip { fill: var(--accent); opacity: 0.7; }
+
+/* Web (force-directed) layout: edge roles flip versus the tree —
+   DEPENDS_ON is solid and labeled (the point of the view), containment
+   drops back to faint short links that only hold the clusters together. */
+.cm-weblink { stroke: var(--cm-edge); stroke-width: 1; opacity: 0.5; }
+.cm-depweb { fill: none; stroke: var(--accent); opacity: 0.55; }
+@media (prefers-reduced-motion: no-preference) {
+  .cm-weblink.fresh, .cm-depweb.fresh { animation: cm-fade 0.22s ease both; }
+}
 .cm-dep-count {
   font-family: var(--mono, ui-monospace, monospace); font-size: 9.5px;
   fill: var(--accent); opacity: 0.8; text-anchor: middle; pointer-events: none;

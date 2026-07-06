@@ -58,6 +58,14 @@
   let T = { x: 60, y: 40, k: 1 }; // pan/zoom transform
   let prevShown = new Set(); // tree ids drawn in the previous frame → "fresh" fade-in
 
+  /* ---- Web (force-directed) layout state ---- */
+  const LAYOUT_KEY = "ontoloom.cmLayout";
+  let layoutMode = "tree"; // "tree" | "web" — persisted across sessions
+  try { if (localStorage.getItem(LAYOUT_KEY) === "web") layoutMode = "web"; } catch (_) {}
+  let webPos = new Map(); // tree id -> {x, y} settled force-sim position
+  let webSig = "";        // signature of the visible set the sim last ran for
+  let webAnim = 0;        // settle-animation token; bump to cancel a running one
+
   function prop(n, key) {
     return n && n.properties && typeof n.properties === "object" ? n.properties[key] : undefined;
   }
@@ -239,6 +247,285 @@
   }
 
   /* ====================================================================
+   * Web layout — a from-scratch force simulation over the VISIBLE nodes
+   *
+   * The tidy tree makes containment easy to read and relationships hard;
+   * the web is the opposite trade. Forces:
+   *   - repulsion between every visible pair (grid-bucketed with a cutoff
+   *     radius, so it stays near-linear at the symbols LOD),
+   *   - spring attraction along containment edges (short rest length —
+   *     children hug their parent),
+   *   - spring attraction along DEPENDS_ON edges (long rest length,
+   *     strength scaled by ln(count) — heavy coupling pulls harder),
+   *   - light gravity from every node toward its domain hub, so domains
+   *     read as visual clusters, plus a whisper of centering on the hubs.
+   *
+   * Determinism: the start position of every node is seeded from a hash
+   * of its identity (angle + radius, domains ring the pinned root), the
+   * tick count is fixed, and there is no Math.random anywhere — the same
+   * graph in the same expansion state always settles into the same
+   * picture. Expanding a node is incremental: existing nodes keep their
+   * settled positions, new children spawn beside their parent, and only
+   * a short re-settle runs.
+   * ================================================================== */
+  const WEB = {
+    cutoff: 240,        // repulsion radius (px) at normal LOD
+    cutoffBig: 120,     // tighter radius once thousands of nodes are up
+    repK: 28,           // repulsion gain: f = repK·qa·qb / d²
+    q: { root: 30, domain: 46, unit: 14, file: 7, sym: 3 }, // charges
+    rest: [0, 500, 100, 55, 26],      // containment rest length by child depth
+    kc: [0, 0.03, 0.08, 0.1, 0.12],   // containment stiffness by child depth
+    depRest: 340,       // DEPENDS_ON springs are long —
+    depK: 0.004,        // — and weak per unit of ln(count)
+    hubG: 0.05,         // per-tick pull toward the domain hub
+    centerG: 0.008,     // per-tick pull of root/domains toward the origin
+    fmax: 40,           // force clamp
+    step: 30,           // displacement clamp per tick
+    ticksFull: 300,     // fixed budget: fresh layout
+    ticksBig: 120,      // fixed budget: fresh layout, thousands of nodes
+    ticksIncr: 90,      // fixed budget: incremental expand
+    bigN: 1200,
+    animMaxN: 400,      // never animate the settle above this node count
+  };
+
+  // FNV-1a — the deterministic seed for every node's start position.
+  function hash32(s) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = (h * 0x01000193) >>> 0;
+    }
+    return h >>> 0;
+  }
+
+  // Visible slice + containment edges + each node's domain-hub index.
+  function collectWeb() {
+    const shown = [];
+    const edges = [];
+    const hubOf = [];
+    (function walk(n, parent, hub) {
+      const i = shown.length;
+      shown.push(n);
+      hubOf.push(n.depth === 1 ? i : hub);
+      if (parent) edges.push([parent, n]);
+      const kids = n._collapsed || !n.children.length ? [] : n.children;
+      const myHub = n.depth === 1 ? i : hub;
+      for (const k of kids) walk(k, n, myHub);
+    })(root, null, -1);
+    return { shown, edges, hubOf };
+  }
+
+  // Seed any node that has never been placed. Returns how many were new.
+  function seedWeb(shown, edges) {
+    const parentOf = new Map();
+    for (const [p, c] of edges) parentOf.set(c.id, p);
+    let fresh = 0;
+    for (const n of shown) {
+      if (webPos.has(n.id)) continue;
+      fresh++;
+      const h = hash32(n.name + " " + n.id);
+      const ang = (h % 3600) * (Math.PI / 1800);
+      if (n.depth === 0) {
+        webPos.set(n.id, { x: 0, y: 0 }); // root is pinned at the origin
+      } else if (n.depth === 1) {
+        const rad = 320 + ((h >>> 12) % 120); // domains ring the root
+        webPos.set(n.id, { x: Math.cos(ang) * rad, y: Math.sin(ang) * rad });
+      } else {
+        // Children spawn in a small deterministic scatter beside their
+        // parent — an expand grows the web outward from where you clicked.
+        const par = parentOf.get(n.id);
+        const p = (par && webPos.get(par.id)) || { x: 0, y: 0 };
+        const rad = 18 + ((h >>> 12) % 30);
+        webPos.set(n.id, { x: p.x + Math.cos(ang) * rad, y: p.y + Math.sin(ang) * rad });
+      }
+    }
+    return fresh;
+  }
+
+  function buildSprings(shown, edges) {
+    const idx = new Map();
+    shown.forEach((n, i) => idx.set(n.id, i));
+    const springs = [];
+    for (const [p, c] of edges) {
+      const d = Math.min(c.depth, WEB.rest.length - 1);
+      springs.push({ a: idx.get(p.id), b: idx.get(c.id), len: WEB.rest[d], k: WEB.kc[d] });
+    }
+    // DEPENDS_ON among visible wire-mapped nodes — same visibility rule as
+    // the renderer, so what pulls is exactly what gets drawn.
+    const wireToTree = {};
+    for (const n of shown) {
+      if (n.real && !(n.real.id in wireToTree)) wireToTree[n.real.id] = n;
+    }
+    for (const fromWire in deps) {
+      const a = wireToTree[fromWire];
+      if (!a) continue;
+      for (const d of deps[fromWire]) {
+        const b = wireToTree[d.id];
+        if (!b || a === b) continue;
+        const k = WEB.depK * (1 + Math.log(1 + (Number(d.count) || 1)));
+        springs.push({ a: idx.get(a.id), b: idx.get(b.id), len: WEB.depRest, k });
+      }
+    }
+    return springs;
+  }
+
+  // One force tick over parallel position arrays. Deterministic: fixed
+  // iteration order, no randomness, pure function of the previous state.
+  function webTick(px, py, qv, springs, hubOf, pinned, cutoff, alpha) {
+    const n = px.length;
+    const fx = new Float64Array(n);
+    const fy = new Float64Array(n);
+    const cut2 = cutoff * cutoff;
+
+    // Repulsion, grid-bucketed: nodes only repel within the cutoff radius,
+    // and only the 3×3 neighborhood of cells is scanned per node.
+    const grid = new Map();
+    const cx = new Int32Array(n);
+    const cy = new Int32Array(n);
+    for (let i = 0; i < n; i++) {
+      cx[i] = Math.floor(px[i] / cutoff);
+      cy[i] = Math.floor(py[i] / cutoff);
+      const key = cx[i] + ":" + cy[i];
+      const cell = grid.get(key);
+      if (cell) cell.push(i);
+      else grid.set(key, [i]);
+    }
+    for (let i = 0; i < n; i++) {
+      for (let gx = cx[i] - 1; gx <= cx[i] + 1; gx++) {
+        for (let gy = cy[i] - 1; gy <= cy[i] + 1; gy++) {
+          const cell = grid.get(gx + ":" + gy);
+          if (!cell) continue;
+          for (const j of cell) {
+            if (j <= i) continue; // each pair once
+            let dx = px[i] - px[j];
+            let dy = py[i] - py[j];
+            let d2 = dx * dx + dy * dy;
+            if (d2 > cut2) continue;
+            if (d2 < 1e-4) {
+              // Coincident seeds: split them apart deterministically.
+              dx = ((i * 31 + j * 7) % 13 - 6) * 0.17 || 0.61;
+              dy = ((i * 17 + j * 11) % 13 - 6) * 0.17 || -0.43;
+              d2 = dx * dx + dy * dy;
+            }
+            const inv = 1 / d2;
+            let f = WEB.repK * qv[i] * qv[j] * inv;
+            if (f > WEB.fmax) f = WEB.fmax;
+            const d = Math.sqrt(d2);
+            const ux = dx / d, uy = dy / d;
+            fx[i] += ux * f; fy[i] += uy * f;
+            fx[j] -= ux * f; fy[j] -= uy * f;
+          }
+        }
+      }
+    }
+
+    // Springs: containment + DEPENDS_ON.
+    for (const s of springs) {
+      const dx = px[s.b] - px[s.a];
+      const dy = py[s.b] - py[s.a];
+      const d = Math.sqrt(dx * dx + dy * dy) || 1;
+      let f = s.k * (d - s.len);
+      if (f > WEB.fmax) f = WEB.fmax;
+      else if (f < -WEB.fmax) f = -WEB.fmax;
+      const ux = dx / d, uy = dy / d;
+      fx[s.a] += ux * f; fy[s.a] += uy * f;
+      fx[s.b] -= ux * f; fy[s.b] -= uy * f;
+    }
+
+    // Gravity: members toward their domain hub; hubs (and root) centered.
+    for (let i = 0; i < n; i++) {
+      const h = hubOf[i];
+      if (h >= 0 && h !== i) {
+        fx[i] += (px[h] - px[i]) * WEB.hubG;
+        fy[i] += (py[h] - py[i]) * WEB.hubG;
+      } else {
+        fx[i] += -px[i] * WEB.centerG;
+        fy[i] += -py[i] * WEB.centerG;
+      }
+    }
+
+    // Integrate with a displacement clamp; the root never moves.
+    for (let i = 0; i < n; i++) {
+      if (pinned[i]) continue;
+      let sx = fx[i] * alpha;
+      let sy = fy[i] * alpha;
+      if (sx > WEB.step) sx = WEB.step; else if (sx < -WEB.step) sx = -WEB.step;
+      if (sy > WEB.step) sy = WEB.step; else if (sy < -WEB.step) sy = -WEB.step;
+      px[i] += sx;
+      py[i] += sy;
+    }
+  }
+
+  // Geometric cooling: alpha at tick t of T total, from a0 down to aMin.
+  function webAlpha(t, total) {
+    const a0 = 0.6, aMin = 0.05;
+    if (total <= 1) return aMin;
+    return a0 * Math.pow(aMin / a0, t / (total - 1));
+  }
+
+  // Run (or animate) the sim for the current visible slice, then persist
+  // the settled positions into webPos. Fixed tick budgets keep it
+  // deterministic; the optional settle animation renders intermediate
+  // frames but always lands on the same final state.
+  function runWebSim(shown, edges, hubOf) {
+    const n = shown.length;
+    const fresh = seedWeb(shown, edges);
+    const springs = buildSprings(shown, edges);
+    const cutoff = n > WEB.bigN ? WEB.cutoffBig : WEB.cutoff;
+    const ticks =
+      fresh > n * 0.4
+        ? (n > WEB.bigN ? WEB.ticksBig : WEB.ticksFull)
+        : WEB.ticksIncr;
+
+    const px = new Float64Array(n);
+    const py = new Float64Array(n);
+    const qv = new Float64Array(n);
+    const pinned = new Uint8Array(n);
+    const QK = { root: WEB.q.root, domain: WEB.q.domain, unit: WEB.q.unit, file: WEB.q.file, sym: WEB.q.sym };
+    for (let i = 0; i < n; i++) {
+      const p = webPos.get(shown[i].id);
+      px[i] = p.x;
+      py[i] = p.y;
+      qv[i] = QK[shown[i].type] || WEB.q.sym;
+      pinned[i] = shown[i].depth === 0 ? 1 : 0;
+    }
+
+    const commit = () => {
+      for (let i = 0; i < n; i++) webPos.set(shown[i].id, { x: px[i], y: py[i] });
+      for (let i = 0; i < n; i++) { shown[i].x = px[i]; shown[i].y = py[i]; }
+    };
+
+    const token = ++webAnim;
+    const animate =
+      n <= WEB.animMaxN &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: no-preference)").matches;
+
+    if (!animate) {
+      for (let t = 0; t < ticks; t++) webTick(px, py, qv, springs, hubOf, pinned, cutoff, webAlpha(t, ticks));
+      commit();
+      return;
+    }
+
+    // Animated settle: a synchronous head so the first frame is already
+    // roughly shaped, then rAF chunks. Total tick count is identical to
+    // the synchronous path, so the final picture is the same.
+    let t = 0;
+    const head = Math.min(ticks, 60);
+    for (; t < head; t++) webTick(px, py, qv, springs, hubOf, pinned, cutoff, webAlpha(t, ticks));
+    commit();
+    const chunk = () => {
+      if (token !== webAnim || layoutMode !== "web") return; // superseded
+      const end = Math.min(ticks, t + 20);
+      for (; t < end; t++) webTick(px, py, qv, springs, hubOf, pinned, cutoff, webAlpha(t, ticks));
+      commit();
+      drawWeb(shown, edges);
+      if (t < ticks) requestAnimationFrame(chunk);
+    };
+    if (t < ticks) requestAnimationFrame(chunk);
+  }
+
+  /* ====================================================================
    * Rendering — string-built SVG of only the expanded slice
    * ================================================================== */
   function applyT() {
@@ -260,8 +547,112 @@
     return String(s).replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
   }
 
+  // Round for the SVG string — keeps the markup compact and the
+  // determinism assertions exact.
+  function r2(v) {
+    return Math.round(v * 100) / 100;
+  }
+
+  // Web-mode paint. Node markup carries the exact same classes, data-id,
+  // and ARIA as tree mode, so click-to-expand, keyboard nav, search
+  // dim/match, selection, and the inspector all work unchanged. Edges flip
+  // roles versus the tree: DEPENDS_ON becomes solid, labeled, and loud
+  // (the star of the show); containment fades to short faint links.
+  function drawWeb(shown, edges) {
+    const KICK = { root: "repository", domain: "domain", unit: "unit", file: "file", sym: "symbol" };
+    let s = "";
+    for (const [p, c] of edges) {
+      const fresh = prevShown.size && !prevShown.has(c.id) ? " fresh" : "";
+      s += `<line class="cm-weblink${fresh}" x1="${r2(p.x)}" y1="${r2(p.y)}" x2="${r2(c.x)}" y2="${r2(c.y)}"/>`;
+    }
+    if (showDeps) {
+      const wireToTree = {};
+      for (const n of shown) {
+        if (n.real && !(n.real.id in wireToTree)) wireToTree[n.real.id] = n;
+      }
+      for (const fromWire in deps) {
+        const a = wireToTree[fromWire];
+        if (!a) continue;
+        for (const d of deps[fromWire]) {
+          const b = wireToTree[d.id];
+          if (!b || a === b) continue;
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const len = Math.sqrt(dx * dx + dy * dy) || 1;
+          const ux = dx / len, uy = dy / len;
+          const w = Math.min(3, 1 + Math.log(1 + (Number(d.count) || 1)) * 0.35);
+          // Count label sits at the midpoint, nudged off the line.
+          const mx = (a.x + b.x) / 2 - uy * 8;
+          const my = (a.y + b.y) / 2 + ux * 8;
+          s +=
+            `<line class="cm-depweb" x1="${r2(a.x)}" y1="${r2(a.y)}" x2="${r2(b.x)}" y2="${r2(b.y)}" stroke-width="${r2(w)}"/>` +
+            `<circle class="cm-dep-tip" cx="${r2(b.x - ux * 12)}" cy="${r2(b.y - uy * 12)}" r="2"/>` +
+            (d.count
+              ? `<text class="cm-dep-count" x="${r2(mx)}" y="${r2(my + 3)}">${esc(String(d.count))}</text>`
+              : "");
+        }
+      }
+    }
+    for (const n of shown) {
+      const hasKids = n.children.length > 0;
+      const collapsed = hasKids && n._collapsed;
+      const r = n.type === "root" ? 7 : n.type === "domain" ? 6 : n.type === "unit" ? 5 : n.type === "sym" ? 3 : 4;
+      const col = nodeColor(n);
+      const fill = collapsed ? col : hasKids ? "var(--bg)" : col;
+      const cls = ["cm-node"];
+      if (selectedId === n.id) cls.push("selected");
+      if (matchSet) cls.push(matchSet.has(n) ? "match" : "dim");
+      if (prevShown.size && !prevShown.has(n.id)) cls.push("fresh");
+      const count = collapsed && n.nsyms ? ` <tspan fill="var(--text-faint)">·${n.nsyms}</tspan>` : "";
+      const lx = r + 7;
+      // In a web there are no columns to guard — labels always sit to the
+      // right of the dot, truncated so dense clusters stay legible.
+      const shownName = truncate(n.name, 26);
+      const estW = shownName.length * 7 + 30;
+      const aria =
+        ` role="button" tabindex="0" aria-label="${esc(n.name)}, ${KICK[n.type]}"` +
+        (hasKids ? ` aria-expanded="${collapsed ? "false" : "true"}"` : "");
+      s +=
+        `<g class="${cls.join(" ")}" data-id="${n.id}"${aria} transform="translate(${r2(n.x)},${r2(n.y)})">` +
+        (selectedId === n.id ? `<circle class="selring" r="${r + 4}"/>` : "") +
+        `<circle class="dot" r="${r}" fill="${fill}" stroke="${col}" stroke-width="1.6"/>` +
+        (collapsed
+          ? `<circle r="${r + 3.5}" fill="none" stroke="${col}" stroke-width="1" opacity=".4"/>`
+          : "") +
+        `<text class="lbl" x="${lx}" y="3.5" font-size="${n.type === "sym" ? 10.5 : 11.5}">` +
+        esc(shownName) + count + `</text>` +
+        `<rect class="hit" x="-${r + 4}" y="-9" width="${lx + estW + r + 4}" height="18"/>` +
+        `</g>`;
+    }
+    vp.innerHTML = s;
+    prevShown = new Set(shown.map((n) => n.id));
+    applyT();
+    visibleEl.textContent = shown.length.toLocaleString() + " nodes shown";
+  }
+
+  // Web-mode render: re-simulate only when the visible set actually
+  // changed (expand/collapse/level/search). Pure repaints — selection,
+  // dep toggle, search dimming — reuse the settled positions untouched.
+  function renderWeb() {
+    const { shown, edges, hubOf } = collectWeb();
+    const sig = shown.map((n) => n.id).join(",");
+    if (sig !== webSig) {
+      webSig = sig;
+      runWebSim(shown, edges, hubOf);
+    } else {
+      for (const n of shown) {
+        const p = webPos.get(n.id);
+        if (p) { n.x = p.x; n.y = p.y; }
+      }
+    }
+    drawWeb(shown, edges);
+  }
+
   function render() {
     if (!root) return;
+    if (layoutMode === "web") {
+      renderWeb();
+      return;
+    }
     layout(root);
     const shown = [];
     const edges = [];
@@ -619,8 +1010,13 @@
       if (n.y < minY) minY = n.y;
       if (n.y > maxY) maxY = n.y;
     }
-    // Left padding covers the left-anchored labels of expanded parents.
-    minX -= 250; maxX += 260; minY -= 30; maxY += 30;
+    if (layoutMode === "web") {
+      // No left-anchored labels in the web — pad for right labels only.
+      minX -= 80; maxX += 220; minY -= 40; maxY += 40;
+    } else {
+      // Left padding covers the left-anchored labels of expanded parents.
+      minX -= 250; maxX += 260; minY -= 30; maxY += 30;
+    }
     const r = svg.getBoundingClientRect();
     if (!r.width || !r.height) return; // pane not visible yet
     const k = Math.min(2, Math.max(0.1, Math.min(r.width / (maxX - minX), r.height / (maxY - minY))));
@@ -637,6 +1033,34 @@
       showDeps = !showDeps;
       depsBtn.setAttribute("aria-pressed", showDeps ? "true" : "false");
       render();
+    });
+  }
+
+  /* ---- Layout toggle: Tree (tidy drill-down) | Web (force-directed) ---- */
+  function syncLayoutButtons() {
+    document
+      .querySelectorAll("#cm-layout button")
+      .forEach((b) => b.setAttribute("aria-pressed", b.dataset.m === layoutMode ? "true" : "false"));
+  }
+
+  function setLayoutMode(m) {
+    if (m !== "tree" && m !== "web") return;
+    if (m === layoutMode) { syncLayoutButtons(); return; }
+    layoutMode = m;
+    webAnim++; // cancel any settle animation from the other mode
+    try { localStorage.setItem(LAYOUT_KEY, m); } catch (_) { /* private mode — just not remembered */ }
+    syncLayoutButtons();
+    prevShown = new Set(); // a mode switch repaints everything; no fade cues
+    render();
+    fit();
+  }
+
+  const layoutCtl = document.getElementById("cm-layout");
+  if (layoutCtl) {
+    layoutCtl.addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (!b || !root) return;
+      setLayoutMode(b.dataset.m);
     });
   }
 
@@ -861,6 +1285,10 @@
       selectedId = null;
       matchSet = null;
       prevShown = new Set(); // fresh graph: first paint arrives without fades
+      webPos = new Map();    // fresh graph: web positions reseed from hashes
+      webSig = "";
+      webAnim++;
+      syncLayoutButtons();   // reflect the persisted Tree|Web choice
       searchInput.value = "";
       matchCountEl.hidden = true;
       detail.classList.add("empty");
@@ -881,6 +1309,9 @@
       root = null;
       byId = {};
       prevShown = new Set();
+      webPos = new Map();
+      webSig = "";
+      webAnim++;
       vp.innerHTML = "";
       statsEl.innerHTML = "";
       visibleEl.textContent = "";

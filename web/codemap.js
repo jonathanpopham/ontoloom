@@ -391,17 +391,21 @@
    * Interactions: click-to-expand, level filters, search, pan/zoom, fit
    * ================================================================== */
   let dragMoved = false;
+  let downId = null; // node under the cursor at pointerdown (captured before any pan)
 
-  vp.addEventListener("click", (e) => {
-    if (dragMoved) return; // that click was the tail end of a pan
-    const g = e.target.closest(".cm-node");
-    if (!g) return;
-    const n = byId[g.dataset.id];
-    if (!n) return;
-    if (n.children.length) n._collapsed = !n._collapsed; // lazy: direct children only
-    showDetail(n);
-    render();
-  });
+  // Collapse a node AND every descendant, so clicking an expanded node closes
+  // all of its children (not just one level).
+  function collapseSubtree(n) {
+    n._collapsed = true;
+    for (const c of n.children) collapseSubtree(c);
+  }
+  function toggleNode(n) {
+    if (!n.children.length) return;
+    if (n._collapsed) n._collapsed = false; // single click → reveal direct children
+    else collapseSubtree(n); // click again → close all children
+  }
+  // Clicks are handled in pointerup (below) so pointer-capture can never steal
+  // the target — clicking the dot OR the label anywhere on a node works.
 
   document.getElementById("cm-levels").addEventListener("click", (e) => {
     const b = e.target.closest("button");
@@ -449,21 +453,39 @@
   wrap.addEventListener("pointerdown", (e) => {
     drag = { x: e.clientX, y: e.clientY, tx: T.x, ty: T.y };
     dragMoved = false;
-    wrap.classList.add("grabbing");
-    wrap.setPointerCapture(e.pointerId);
+    // Record the node NOW, before any pointer capture can redirect e.target.
+    const g = e.target.closest(".cm-node");
+    downId = g ? g.dataset.id : null;
   });
   wrap.addEventListener("pointermove", (e) => {
     if (!drag) return;
     const dx = e.clientX - drag.x;
     const dy = e.clientY - drag.y;
-    if (Math.abs(dx) + Math.abs(dy) > 4) dragMoved = true;
-    T.x = drag.tx + dx;
-    T.y = drag.ty + dy;
-    applyT();
+    if (!dragMoved && Math.abs(dx) + Math.abs(dy) > 4) {
+      dragMoved = true; // only now is it a pan, not a click
+      wrap.classList.add("grabbing");
+      try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
+    }
+    if (dragMoved) {
+      T.x = drag.tx + dx;
+      T.y = drag.ty + dy;
+      applyT();
+    }
   });
-  wrap.addEventListener("pointerup", () => {
+  wrap.addEventListener("pointerup", (e) => {
+    const wasClick = drag && !dragMoved && downId;
     drag = null;
     wrap.classList.remove("grabbing");
+    try { wrap.releasePointerCapture(e.pointerId); } catch (_) {}
+    if (wasClick) {
+      const n = byId[downId];
+      if (n) {
+        toggleNode(n);
+        showDetail(n);
+        render();
+      }
+    }
+    downId = null;
   });
 
   wrap.addEventListener(

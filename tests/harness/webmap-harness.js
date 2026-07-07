@@ -15,7 +15,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
-const SRC = fs.readFileSync("/Users/jag/geist/ontoloom-web/web/codemap.js", "utf8");
+const SRC = fs.readFileSync(path.join(__dirname, "..", "..", "web", "codemap.js"), "utf8");
 const DATA = JSON.parse(
   fs.readFileSync(path.join(__dirname, "eshop-hierarchy.ontoloom.json"), "utf8")
 );

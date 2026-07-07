@@ -804,9 +804,14 @@
           ? `<circle r="${r + 3.5}" fill="none" stroke="${col}" stroke-width="1" opacity=".4"/>`
           : "") +
         // Pin indicator: a dashed ring plus a small dot at the ring's
-        // upper-right — "this one is held where you put it".
+        // upper-right — "this one is held where you put it". The ring's
+        // stroke is non-scaling so it stays a hairline at any zoom instead
+        // of vanishing zoomed out (k=0.1) or turning to rope zoomed in
+        // (k=3); a presentation attribute (not CSS) because Firefox only
+        // honors vector-effect as an attribute. Static string, so painted
+        // markup stays byte-identical across runs.
         (pinnedHere
-          ? `<circle class="pinring" r="${r + 4.5}"/>` +
+          ? `<circle class="pinring" vector-effect="non-scaling-stroke" r="${r + 4.5}"/>` +
             `<circle class="pindot" cx="${r2((r + 4.5) * 0.707)}" cy="${r2(-(r + 4.5) * 0.707)}" r="2"/>`
           : "") +
         `<text class="lbl" x="${lx}" y="3.5" font-size="${n.type === "sym" ? 10.5 : 11.5}">` +

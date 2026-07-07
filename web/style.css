@@ -637,8 +637,11 @@ body.codemap-mode #btn-clear { display: none; }
   background-color: var(--bg);
 }
 .cm-wrap.grabbing { cursor: grabbing; }
-.cm-wrap.dragging-node { cursor: move; }
-.cm-wrap.dragging-node .cm-node { cursor: move; }
+/* One cursor grammar everywhere: grab = "you can move this", grabbing =
+   "it's in your hand" — same verbs as the editor canvas (.node) and the
+   pan above. `move` said something different for the same gesture. */
+.cm-wrap.dragging-node,
+.cm-wrap.dragging-node .cm-node { cursor: grabbing; }
 #cm-svg { width: 100%; height: 100%; display: block; }
 #cm-svg text {
   font-family: var(--mono);
@@ -650,6 +653,11 @@ body.codemap-mode #btn-clear { display: none; }
 .cm-edge { fill: none; stroke: var(--cm-edge); stroke-width: 1.3; }
 
 .cm-node { cursor: pointer; outline: none; }
+/* Web-mode nodes (only they carry cm-w-* classes) are draggable, so they
+   advertise it: grab at rest, grabbing on press. The root (cm-w-root) is
+   pinned at the origin and stays a plain pointer, like every tree node. */
+.cm-node:is(.cm-w-domain, .cm-w-unit, .cm-w-file, .cm-w-sym) { cursor: grab; }
+.cm-node:is(.cm-w-domain, .cm-w-unit, .cm-w-file, .cm-w-sym):active { cursor: grabbing; }
 .cm-node .hit { fill: transparent; }
 .cm-node .dot { transition: none; }
 .cm-node:hover text.lbl { fill: var(--accent); }
@@ -889,13 +897,26 @@ body.codemap-mode #btn-clear { display: none; }
 .cm-depweb { fill: none; stroke: var(--accent); opacity: 0.55; }
 
 /* Pinned nodes (web mode drag-to-reposition): a dashed ring + corner dot
-   mark "held where you put it"; double-click or P unpins. */
+   mark "held where you put it"; double-click or P unpins. The ring's
+   stroke is non-scaling (attribute set in the markup), so these widths and
+   dashes are screen pixels at every zoom — 1.3px reads as a deliberate
+   hairline in both themes without competing with the 1.6px selection ring. */
 .cm-node .pinring {
   fill: none;
   stroke: var(--accent);
-  stroke-width: 1;
-  stroke-dasharray: 2 3;
+  stroke-width: 1.3;
+  stroke-dasharray: 3 3;
   opacity: 0.85;
+}
+/* Hovering (or keyboard-focusing) a pinned node firms the ring up — a
+   quiet "this is the held one; drag again or unpin" cue. */
+.cm-node.pinned:hover .pinring,
+.cm-node.pinned:focus-visible .pinring {
+  stroke-width: 1.6;
+  opacity: 1;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cm-node .pinring { transition: stroke-width 0.12s ease, opacity 0.12s ease; }
 }
 .cm-node .pindot { fill: var(--accent); }
 

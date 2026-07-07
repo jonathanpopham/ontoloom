@@ -411,7 +411,7 @@
         webPos.set(n.id, { x: pin.x, y: pin.y });
         continue;
       }
-      const h = hash32(n.name + " " + n.id);
+      const h = hash32(n.name + "\u0000" + n.id);
       const ang = (h % 3600) * (Math.PI / 1800);
       if (n.depth === 0) {
         webPos.set(n.id, { x: 0, y: 0 }); // root is pinned at the origin

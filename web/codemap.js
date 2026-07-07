@@ -139,17 +139,27 @@
 
     root = tnode("root", name || "Code map", null, 0);
 
+    // Infrastructure groups (properties.kind === "infrastructure": the named
+    // homes TrailTracker gives scaffold/docs/generated/root files — Build &
+    // Tooling, Documentation, Generated, Repo root, each with a `reason`)
+    // render muted and stay collapsed when the level buttons expand the map,
+    // so the colored circles remain the story of what the software DOES.
+    // Click one and it opens like any other domain.
+    const INFRA_COLOR = "#6b7793";
+
     const domTree = new Map(); // domain wire id -> tree node
     let hueIdx = 0;
     for (const d of nodes) {
       if (level(d) !== "domain") continue;
+      const infra = prop(d, "kind") === "infrastructure";
       const t = tnode("domain", d.caption || d.id, d, 1, {
-        color: DOMAIN_HUES[hueIdx++ % DOMAIN_HUES.length],
+        color: infra ? INFRA_COLOR : DOMAIN_HUES[hueIdx++ % DOMAIN_HUES.length],
+        infra,
       });
       domTree.set(d.id, t);
       root.children.push(t);
     }
-    let ungrouped = null; // files whose CONTAINS carry no domain parent
+    let ungrouped = null; // legacy graphs only: files with no domain parent
 
     const unitTree = new Map(); // domainTreeId + "\0" + unitName -> tree node
     for (const f of nodes) {
@@ -192,6 +202,12 @@
       domT.children.sort((a, b) => a.name.localeCompare(b.name));
       for (const u of domT.children) u.children.sort((a, b) => a.name.localeCompare(b.name));
     }
+    // Business domains keep wire order; infrastructure groups sink to the
+    // bottom of the list (alphabetical among themselves).
+    root.children.sort(
+      (a, b) => (a.infra ? 1 : 0) - (b.infra ? 1 : 0) ||
+        (a.infra && b.infra ? a.name.localeCompare(b.name) : 0)
+    );
     rollup(root);
     return root;
   }
@@ -224,7 +240,10 @@
   function setDepth(d) {
     (function walk(n) {
       if (n.children.length) {
-        n._collapsed = n.depth >= d;
+        // Infrastructure groups stay collapsed under bulk expansion — build
+        // scripts and generated files are named, not noisy. A direct click
+        // still opens them.
+        n._collapsed = n.depth >= d || (n.type === "domain" && n.infra === true);
         n.children.forEach(walk);
       }
     })(root);
@@ -802,10 +821,11 @@
       }
     }
 
-    // Facts straight off the wire node: archetype / layer / domain / unit.
+    // Facts straight off the wire node: archetype / layer / domain / unit,
+    // plus kind/reason (business domain vs named infrastructure group).
     const facts = [];
     if (real) {
-      for (const key of ["archetype", "layer", "domain", "unit"]) {
+      for (const key of ["archetype", "layer", "domain", "unit", "kind", "reason"]) {
         const v = prop(real, key);
         if (v != null && v !== "") facts.push([key, v]);
       }
@@ -1116,7 +1136,11 @@
         `<em>does</em> — think “Billing”, “Catalog”, or “Identity” (in design jargon: a ` +
         `<em>bounded context</em>).</p>` +
         `<p>Domains group code by purpose, not by folder — each gets its own color so ` +
-        `you can tell them apart anywhere in the map.</p>`,
+        `you can tell them apart anywhere in the map.</p>` +
+        `<p>${sw("#6b7793")} The muted circles at the bottom are <strong>infrastructure ` +
+        `groups</strong> — Build &amp; Tooling, Documentation, Generated, Repo root. ` +
+        `Every file has a named home (nothing is “ungrouped”); these hold the scaffolding ` +
+        `around the business code and stay folded until you click them.</p>`,
     },
     {
       title: "Units — the buildable pieces",

@@ -637,6 +637,8 @@ body.codemap-mode #btn-clear { display: none; }
   background-color: var(--bg);
 }
 .cm-wrap.grabbing { cursor: grabbing; }
+.cm-wrap.dragging-node { cursor: move; }
+.cm-wrap.dragging-node .cm-node { cursor: move; }
 #cm-svg { width: 100%; height: 100%; display: block; }
 #cm-svg text {
   font-family: var(--mono);
@@ -885,6 +887,40 @@ body.codemap-mode #btn-clear { display: none; }
    drops back to faint short links that only hold the clusters together. */
 .cm-weblink { stroke: var(--cm-edge); stroke-width: 1; opacity: 0.5; }
 .cm-depweb { fill: none; stroke: var(--accent); opacity: 0.55; }
+
+/* Pinned nodes (web mode drag-to-reposition): a dashed ring + corner dot
+   mark "held where you put it"; double-click or P unpins. */
+.cm-node .pinring {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  opacity: 0.85;
+}
+.cm-node .pindot { fill: var(--accent); }
+
+/* Label LOD for dense web views: zoomed far out, symbol/file (then unit)
+   labels fade instead of piling into a smear; zoom back in and they return.
+   Only web-mode nodes carry cm-w-* classes, so the tidy tree keeps its
+   column-guarded labels at every zoom. Hover/selection/search matches stay
+   labeled at any zoom — you never lose the thing you're pointing at. */
+#cm-svg .cm-node text.lbl { transition: opacity 0.18s ease; }
+@media (prefers-reduced-motion: reduce) {
+  #cm-svg .cm-node text.lbl { transition: none; }
+}
+#cm-svg[data-z="mid"] .cm-w-sym text.lbl,
+#cm-svg[data-z="mid"] .cm-w-file text.lbl,
+#cm-svg[data-z="far"] .cm-w-sym text.lbl,
+#cm-svg[data-z="far"] .cm-w-file text.lbl,
+#cm-svg[data-z="far"] .cm-w-unit text.lbl {
+  opacity: 0;
+}
+#cm-svg[data-z] .cm-node:hover text.lbl,
+#cm-svg[data-z] .cm-node:focus-visible text.lbl,
+#cm-svg[data-z] .cm-node.selected text.lbl,
+#cm-svg[data-z] .cm-node.match text.lbl {
+  opacity: 1;
+}
 @media (prefers-reduced-motion: no-preference) {
   .cm-weblink.fresh, .cm-depweb.fresh { animation: cm-fade 0.22s ease both; }
 }

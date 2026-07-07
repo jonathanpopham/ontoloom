@@ -19,6 +19,18 @@
  * Ontoloom front-end. This file only reads the graph; it never mutates the
  * editor's nodes/relationships, so switching back to the manual editor is
  * always lossless.
+ *
+ * Determinism + user pins: every untouched node keeps the seeded
+ * deterministic layout (hash-seeded starts, fixed tick budgets, ordered
+ * iteration, no Math.random) — the same graph in the same expansion state
+ * always paints the same picture. Dragging a node in web mode PINS it: the
+ * sim holds it exactly where the user dropped it while springs keep pulling
+ * its neighbors. Pins are user state layered ON TOP of the deterministic
+ * layout — persisted per graph in localStorage (key derived from the graph
+ * name + node/edge counts, value keyed by tree node id) and never consulted
+ * for unpinned nodes, so clearing the pins restores the seeded layout
+ * exactly. Double-click (or the P key) unpins and hands the node back to
+ * the sim.
  */
 "use strict";
 
@@ -65,6 +77,10 @@
   let webPos = new Map(); // tree id -> {x, y} settled force-sim position
   let webSig = "";        // signature of the visible set the sim last ran for
   let webAnim = 0;        // settle-animation token; bump to cancel a running one
+  let webPins = new Map(); // tree id -> {x, y} user-pinned positions (drag-to-move)
+  let pinsKey = "";        // localStorage key for the current graph's pins
+  let webShown = null;     // last-painted web slice (for cheap drag repaints)
+  let webEdges = null;
 
   function prop(n, key) {
     return n && n.properties && typeof n.properties === "object" ? n.properties[key] : undefined;
@@ -305,7 +321,15 @@
     ticksIncr: 90,      // fixed budget: incremental expand
     bigN: 1200,
     animMaxN: 400,      // never animate the settle above this node count
+    sepPad: 12,         // min-separation: label allowance beyond touching dots
+    sepPasses: 24,      // constraint-relaxation passes after the sim settles
   };
+
+  // One dot radius per node type — shared by both renderers and the
+  // collision pass so "overlap" means the same thing everywhere.
+  function nodeR(n) {
+    return n.type === "root" ? 7 : n.type === "domain" ? 6 : n.type === "unit" ? 5 : n.type === "sym" ? 3 : 4;
+  }
 
   // FNV-1a — the deterministic seed for every node's start position.
   function hash32(s) {
@@ -315,6 +339,44 @@
       h = (h * 0x01000193) >>> 0;
     }
     return h >>> 0;
+  }
+
+  /* ---- Pin persistence: user-dragged positions, per graph ----
+   * Tree ids are deterministic per graph build, so they are a stable key
+   * for the same graph across sessions; a different graph hashes to a
+   * different storage key and starts unpinned. */
+  function pinsStorageKey(name, nodes, rels) {
+    return (
+      "ontoloom.cmPins." +
+      hash32(String(name || "") + "|" + nodes.length + "|" + rels.length).toString(36)
+    );
+  }
+  function loadPins() {
+    webPins = new Map();
+    if (!pinsKey) return;
+    try {
+      const raw = localStorage.getItem(pinsKey);
+      if (!raw) return;
+      const o = JSON.parse(raw);
+      for (const k in o) {
+        const x = Number(o[k][0]), y = Number(o[k][1]);
+        if (Number.isFinite(x) && Number.isFinite(y)) webPins.set(k, { x, y });
+      }
+    } catch (_) { /* corrupt or unavailable storage — start unpinned */ }
+  }
+  function savePins() {
+    if (!pinsKey) return;
+    try {
+      if (webPins.size) {
+        const o = {};
+        for (const [k, v] of webPins) o[k] = [r2(v.x), r2(v.y)];
+        localStorage.setItem(pinsKey, JSON.stringify(o));
+      } else if (typeof localStorage.removeItem === "function") {
+        localStorage.removeItem(pinsKey);
+      } else {
+        localStorage.setItem(pinsKey, "{}");
+      }
+    } catch (_) { /* private mode — pins just don't persist */ }
   }
 
   // Visible slice + containment edges + each node's domain-hub index.
@@ -342,6 +404,13 @@
     for (const n of shown) {
       if (webPos.has(n.id)) continue;
       fresh++;
+      // A user pin trumps the hash seed — the node reappears exactly where
+      // it was dropped, even on a fresh load of the same graph.
+      const pin = webPins.get(n.id);
+      if (pin) {
+        webPos.set(n.id, { x: pin.x, y: pin.y });
+        continue;
+      }
       const h = hash32(n.name + " " + n.id);
       const ang = (h % 3600) * (Math.PI / 1800);
       if (n.depth === 0) {
@@ -475,6 +544,72 @@
     }
   }
 
+  // Min-separation constraint pass — the collision resolver. After the sim
+  // settles, overlapping pairs are pushed apart until every pair keeps at
+  // least (rA + rB + sepPad) between centers. Grid-bucketed like the
+  // repulsion (cell size = the largest possible min-separation, so any
+  // violating pair shares a 3×3 neighborhood) and fully deterministic:
+  // fixed pass count, ascending index order, no randomness. Pinned nodes
+  // (root + user pins) never move — their partner takes the full push.
+  function resolveOverlaps(px, py, rv, pinned) {
+    const n = px.length;
+    let rMax = 0;
+    for (let i = 0; i < n; i++) if (rv[i] > rMax) rMax = rv[i];
+    const cell = rMax * 2 + WEB.sepPad;
+    for (let pass = 0; pass < WEB.sepPasses; pass++) {
+      const grid = new Map();
+      const cx = new Int32Array(n);
+      const cy = new Int32Array(n);
+      for (let i = 0; i < n; i++) {
+        cx[i] = Math.floor(px[i] / cell);
+        cy[i] = Math.floor(py[i] / cell);
+        const key = cx[i] + ":" + cy[i];
+        const b = grid.get(key);
+        if (b) b.push(i);
+        else grid.set(key, [i]);
+      }
+      let moved = false;
+      for (let i = 0; i < n; i++) {
+        for (let gx = cx[i] - 1; gx <= cx[i] + 1; gx++) {
+          for (let gy = cy[i] - 1; gy <= cy[i] + 1; gy++) {
+            const b = grid.get(gx + ":" + gy);
+            if (!b) continue;
+            for (const j of b) {
+              if (j <= i) continue;
+              if (pinned[i] && pinned[j]) continue;
+              const minSep = rv[i] + rv[j] + WEB.sepPad;
+              let dx = px[j] - px[i];
+              let dy = py[j] - py[i];
+              let d2 = dx * dx + dy * dy;
+              if (d2 >= minSep * minSep) continue;
+              if (d2 < 1e-4) {
+                // Coincident pair: split deterministically, same recipe as
+                // the repulsion tick.
+                dx = ((i * 31 + j * 7) % 13 - 6) * 0.17 || 0.61;
+                dy = ((i * 17 + j * 11) % 13 - 6) * 0.17 || -0.43;
+                d2 = dx * dx + dy * dy;
+              }
+              const d = Math.sqrt(d2);
+              const ux = dx / d, uy = dy / d;
+              const push = minSep - d;
+              if (pinned[i]) {
+                px[j] += ux * push; py[j] += uy * push;
+              } else if (pinned[j]) {
+                px[i] -= ux * push; py[i] -= uy * push;
+              } else {
+                const h = push / 2;
+                px[i] -= ux * h; py[i] -= uy * h;
+                px[j] += ux * h; py[j] += uy * h;
+              }
+              moved = true;
+            }
+          }
+        }
+      }
+      if (!moved) break; // converged early — deterministic either way
+    }
+  }
+
   // Geometric cooling: alpha at tick t of T total, from a0 down to aMin.
   function webAlpha(t, total) {
     const a0 = 0.6, aMin = 0.05;
@@ -499,6 +634,7 @@
     const px = new Float64Array(n);
     const py = new Float64Array(n);
     const qv = new Float64Array(n);
+    const rv = new Float64Array(n);
     const pinned = new Uint8Array(n);
     const QK = { root: WEB.q.root, domain: WEB.q.domain, unit: WEB.q.unit, file: WEB.q.file, sym: WEB.q.sym };
     for (let i = 0; i < n; i++) {
@@ -506,12 +642,22 @@
       px[i] = p.x;
       py[i] = p.y;
       qv[i] = QK[shown[i].type] || WEB.q.sym;
-      pinned[i] = shown[i].depth === 0 ? 1 : 0;
+      rv[i] = nodeR(shown[i]);
+      // Fixed nodes: the root (always at the origin) and user pins, held
+      // exactly where they were dropped while springs pull their neighbors.
+      const pin = webPins.get(shown[i].id);
+      if (pin) { px[i] = pin.x; py[i] = pin.y; }
+      pinned[i] = shown[i].depth === 0 || pin ? 1 : 0;
     }
 
     const commit = () => {
       for (let i = 0; i < n; i++) webPos.set(shown[i].id, { x: px[i], y: py[i] });
       for (let i = 0; i < n; i++) { shown[i].x = px[i]; shown[i].y = py[i]; }
+    };
+    // The last word after the sim: resolve residual overlaps, then commit.
+    const finish = () => {
+      resolveOverlaps(px, py, rv, pinned);
+      commit();
     };
 
     const token = ++webAnim;
@@ -522,26 +668,33 @@
 
     if (!animate) {
       for (let t = 0; t < ticks; t++) webTick(px, py, qv, springs, hubOf, pinned, cutoff, webAlpha(t, ticks));
-      commit();
+      finish();
       return;
     }
 
     // Animated settle: a synchronous head so the first frame is already
-    // roughly shaped, then rAF chunks. Total tick count is identical to
-    // the synchronous path, so the final picture is the same.
+    // roughly shaped, then rAF chunks. Total tick count — and the final
+    // overlap-resolution pass — is identical to the synchronous path, so
+    // the final picture is the same.
     let t = 0;
     const head = Math.min(ticks, 60);
     for (; t < head; t++) webTick(px, py, qv, springs, hubOf, pinned, cutoff, webAlpha(t, ticks));
+    if (t >= ticks) { finish(); return; } // caller paints the final frame
     commit();
     const chunk = () => {
       if (token !== webAnim || layoutMode !== "web") return; // superseded
       const end = Math.min(ticks, t + 20);
       for (; t < end; t++) webTick(px, py, qv, springs, hubOf, pinned, cutoff, webAlpha(t, ticks));
+      if (t >= ticks) {
+        finish();
+        drawWeb(shown, edges);
+        return;
+      }
       commit();
       drawWeb(shown, edges);
-      if (t < ticks) requestAnimationFrame(chunk);
+      requestAnimationFrame(chunk);
     };
-    if (t < ticks) requestAnimationFrame(chunk);
+    requestAnimationFrame(chunk);
   }
 
   /* ====================================================================
@@ -549,6 +702,14 @@
    * ================================================================== */
   function applyT() {
     vp.setAttribute("transform", `translate(${T.x},${T.y}) scale(${T.k})`);
+    // Label LOD for dense web views: zoomed far out, symbol/file (then
+    // unit) labels fade away instead of piling into an unreadable smear;
+    // zooming back in reveals them smoothly (CSS opacity transition).
+    // Only web-drawn nodes carry the cm-w-* classes the CSS keys on, so
+    // tree mode is untouched.
+    if (svg.dataset) {
+      svg.dataset.z = T.k < 0.28 ? "far" : T.k < 0.55 ? "mid" : "near";
+    }
   }
 
   function nodeColor(n) {
@@ -578,6 +739,8 @@
   // roles versus the tree: DEPENDS_ON becomes solid, labeled, and loud
   // (the star of the show); containment fades to short faint links.
   function drawWeb(shown, edges) {
+    webShown = shown; // cached so a node drag can repaint without re-collecting
+    webEdges = edges;
     const KICK = { root: "repository", domain: "domain", unit: "unit", file: "file", sym: "symbol" };
     let s = "";
     for (const [p, c] of edges) {
@@ -614,11 +777,13 @@
     for (const n of shown) {
       const hasKids = n.children.length > 0;
       const collapsed = hasKids && n._collapsed;
-      const r = n.type === "root" ? 7 : n.type === "domain" ? 6 : n.type === "unit" ? 5 : n.type === "sym" ? 3 : 4;
+      const r = nodeR(n);
       const col = nodeColor(n);
       const fill = collapsed ? col : hasKids ? "var(--bg)" : col;
-      const cls = ["cm-node"];
+      const pinnedHere = webPins.has(n.id);
+      const cls = ["cm-node", "cm-w-" + n.type];
       if (selectedId === n.id) cls.push("selected");
+      if (pinnedHere) cls.push("pinned");
       if (matchSet) cls.push(matchSet.has(n) ? "match" : "dim");
       if (prevShown.size && !prevShown.has(n.id)) cls.push("fresh");
       const count = collapsed && n.nsyms ? ` <tspan fill="var(--text-faint)">·${n.nsyms}</tspan>` : "";
@@ -628,7 +793,8 @@
       const shownName = truncate(n.name, 26);
       const estW = shownName.length * 7 + 30;
       const aria =
-        ` role="button" tabindex="0" aria-label="${esc(n.name)}, ${KICK[n.type]}"` +
+        ` role="button" tabindex="0" aria-label="${esc(n.name)}, ${KICK[n.type]}` +
+        (pinnedHere ? ", pinned" : "") + `"` +
         (hasKids ? ` aria-expanded="${collapsed ? "false" : "true"}"` : "");
       s +=
         `<g class="${cls.join(" ")}" data-id="${n.id}"${aria} transform="translate(${r2(n.x)},${r2(n.y)})">` +
@@ -636,6 +802,12 @@
         `<circle class="dot" r="${r}" fill="${fill}" stroke="${col}" stroke-width="1.6"/>` +
         (collapsed
           ? `<circle r="${r + 3.5}" fill="none" stroke="${col}" stroke-width="1" opacity=".4"/>`
+          : "") +
+        // Pin indicator: a dashed ring plus a small dot at the ring's
+        // upper-right — "this one is held where you put it".
+        (pinnedHere
+          ? `<circle class="pinring" r="${r + 4.5}"/>` +
+            `<circle class="pindot" cx="${r2((r + 4.5) * 0.707)}" cy="${r2(-(r + 4.5) * 0.707)}" r="2"/>`
           : "") +
         `<text class="lbl" x="${lx}" y="3.5" font-size="${n.type === "sym" ? 10.5 : 11.5}">` +
         esc(shownName) + count + `</text>` +
@@ -727,7 +899,7 @@
     for (const n of shown) {
       const hasKids = n.children.length > 0;
       const collapsed = hasKids && n._collapsed;
-      const r = n.type === "root" ? 7 : n.type === "domain" ? 6 : n.type === "unit" ? 5 : n.type === "sym" ? 3 : 4;
+      const r = nodeR(n);
       const col = nodeColor(n);
       const fill = collapsed ? col : hasKids ? "var(--bg)" : col;
       const cls = ["cm-node"];
@@ -741,9 +913,21 @@
       // run through the text. Leaves and collapsed nodes label right. Left
       // labels are truncated to the column gap so neither the text nor its
       // hit-rect can reach the previous column's nodes or steal their clicks.
+      // Right labels get the mirror guard: a collapsed/leaf node that is not
+      // in the LAST column is truncated to the gap toward the NEXT column,
+      // so its text can't run under nodes drawn there. The root (no
+      // siblings: nothing else is visible when it's collapsed) and the last
+      // column (nothing to its right) keep the generous cap.
       const labelLeft = hasKids && !collapsed;
-      const gapLeft = n.depth === 0 ? Infinity : COL[Math.min(n.depth, COL.length - 1)] - COL[Math.min(n.depth, COL.length - 1) - 1];
-      const maxChars = labelLeft ? Math.max(8, Math.min(34, Math.floor((gapLeft - 45) / 7))) : 34;
+      const colIdx = Math.min(n.depth, COL.length - 1);
+      let maxChars = 34;
+      if (labelLeft) {
+        const gapLeft = n.depth === 0 ? Infinity : COL[colIdx] - COL[colIdx - 1];
+        maxChars = Math.max(8, Math.min(34, Math.floor((gapLeft - 45) / 7)));
+      } else if (n.depth >= 1 && colIdx < COL.length - 1) {
+        const gapRight = COL[colIdx + 1] - COL[colIdx];
+        maxChars = Math.max(8, Math.min(34, Math.floor((gapRight - 45) / 7)));
+      }
       const shownName = truncate(n.name, maxChars);
       const estW = shownName.length * 7 + 30; // rough mono width incl. count
       // Every node is keyboard-reachable: Tab walks the visible tree in
@@ -942,33 +1126,80 @@
     if (hits > 0) fit();
   }
 
+  // Pin a node at its current position, persist, and re-settle the sim so
+  // springs pull its neighbors into agreement (the pin itself never moves).
+  function pinNode(n) {
+    webPins.set(n.id, { x: n.x, y: n.y });
+    webPos.set(n.id, { x: n.x, y: n.y });
+    savePins();
+  }
+  function resettleWeb() {
+    if (layoutMode !== "web" || !root) return;
+    const { shown, edges, hubOf } = collectWeb();
+    webSig = shown.map((n) => n.id).join(",");
+    runWebSim(shown, edges, hubOf);
+    drawWeb(shown, edges);
+  }
+  // During a node drag, repaint the whole slice while it's cheap; above the
+  // threshold move just the dragged <g> (its edges catch up on drop).
+  function repaintWebDrag(n) {
+    if (webShown && webShown.length <= 1500) {
+      drawWeb(webShown, webEdges);
+      return;
+    }
+    const g = vp.querySelector(`[data-id="${n.id}"]`);
+    if (g) g.setAttribute("transform", `translate(${r2(n.x)},${r2(n.y)})`);
+  }
+
   let drag = null;
   wrap.addEventListener("pointerdown", (e) => {
-    drag = { x: e.clientX, y: e.clientY, tx: T.x, ty: T.y };
     dragMoved = false;
     // Record the node NOW, before any pointer capture can redirect e.target.
     const g = e.target.closest(".cm-node");
     downId = g ? g.dataset.id : null;
+    // In web mode a drag that STARTS on a node repositions that node; a
+    // drag that starts on empty canvas still pans. The root stays pinned
+    // at the origin, and tree mode never moves nodes. Which one this
+    // gesture is stays undecided until the movement threshold — a plain
+    // click must keep firing expand/collapse exactly as before.
+    const n = downId ? byId[downId] : null;
+    const nodeDrag = layoutMode === "web" && n && n.depth > 0 ? n : null;
+    drag = {
+      x: e.clientX, y: e.clientY, tx: T.x, ty: T.y,
+      node: nodeDrag, nx: nodeDrag ? nodeDrag.x : 0, ny: nodeDrag ? nodeDrag.y : 0,
+    };
   });
   wrap.addEventListener("pointermove", (e) => {
     if (!drag) return;
     const dx = e.clientX - drag.x;
     const dy = e.clientY - drag.y;
     if (!dragMoved && Math.abs(dx) + Math.abs(dy) > 4) {
-      dragMoved = true; // only now is it a pan, not a click
-      wrap.classList.add("grabbing");
+      dragMoved = true; // only now is it a drag, not a click
+      wrap.classList.add(drag.node ? "dragging-node" : "grabbing");
       try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
+      if (drag.node) webAnim++; // a running settle animation must not fight the hand
     }
     if (dragMoved) {
-      T.x = drag.tx + dx;
-      T.y = drag.ty + dy;
-      applyT();
+      if (drag.node) {
+        // Screen delta → graph coords through the current zoom.
+        const n = drag.node;
+        n.x = drag.nx + dx / T.k;
+        n.y = drag.ny + dy / T.k;
+        webPos.set(n.id, { x: n.x, y: n.y });
+        repaintWebDrag(n);
+      } else {
+        T.x = drag.tx + dx;
+        T.y = drag.ty + dy;
+        applyT();
+      }
     }
   });
   wrap.addEventListener("pointerup", (e) => {
     const wasClick = drag && !dragMoved && downId;
+    const draggedNode = drag && dragMoved ? drag.node : null;
     drag = null;
     wrap.classList.remove("grabbing");
+    wrap.classList.remove("dragging-node");
     try { wrap.releasePointerCapture(e.pointerId); } catch (_) {}
     if (wasClick) {
       const n = byId[downId];
@@ -977,24 +1208,73 @@
         showDetail(n);
         render();
       }
+    } else if (draggedNode) {
+      // Drop = pin. The sim re-settles around the held node.
+      pinNode(draggedNode);
+      resettleWeb();
     }
     downId = null;
   });
 
+  // Double-click a pinned node to unpin it — the node returns to sim
+  // control from wherever it sits (no jump; the springs take over).
+  wrap.addEventListener("dblclick", (e) => {
+    if (layoutMode !== "web") return;
+    const g = e.target.closest(".cm-node");
+    if (!g || !webPins.has(g.dataset.id)) return;
+    webPins.delete(g.dataset.id);
+    savePins();
+    resettleWeb();
+  });
+
   // Keyboard: Enter or Space on a focused node behaves exactly like a click.
   // render() rebuilds the SVG, so focus is put back on the same node after.
+  // Web-mode parity for drag-to-reposition: arrow keys nudge the focused
+  // node (12px, ×4 with Shift) and pin it where it lands; P toggles the pin
+  // (unpin re-settles, like double-click).
   svg.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter" && e.key !== " ") return;
     const g = e.target.closest ? e.target.closest(".cm-node") : null;
     if (!g) return;
-    e.preventDefault();
     const n = byId[g.dataset.id];
     if (!n) return;
-    toggleNode(n);
-    showDetail(n);
-    render();
-    const again = vp.querySelector(`[data-id="${n.id}"]`);
-    if (again) again.focus();
+    const refocus = () => {
+      const again = vp.querySelector(`[data-id="${n.id}"]`);
+      if (again) again.focus();
+    };
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggleNode(n);
+      showDetail(n);
+      render();
+      refocus();
+      return;
+    }
+    if (layoutMode !== "web" || n.depth === 0) return;
+    const ARROW = {
+      ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
+    }[e.key];
+    if (ARROW) {
+      e.preventDefault();
+      const step = e.shiftKey ? 48 : 12;
+      n.x += ARROW[0] * step;
+      n.y += ARROW[1] * step;
+      pinNode(n); // a keyboard move is a deliberate placement, same as a drop
+      if (webShown) drawWeb(webShown, webEdges);
+      refocus();
+      return;
+    }
+    if (e.key === "p" || e.key === "P") {
+      e.preventDefault();
+      if (webPins.has(n.id)) {
+        webPins.delete(n.id);
+        savePins();
+        resettleWeb();
+      } else {
+        pinNode(n);
+        if (webShown) drawWeb(webShown, webEdges);
+      }
+      refocus();
+    }
   });
 
   wrap.addEventListener(
@@ -1181,7 +1461,10 @@
         `whole map to that depth at once.</p>` +
         `<p><strong>Search</strong> lights up matching files and symbols and opens the path to ` +
         `them. <strong>Drag</strong> to pan, <strong>scroll</strong> to zoom, <strong>Fit</strong> to ` +
-        `recenter. Replay this tour any time with the <strong>?</strong> button.</p>`,
+        `recenter. Replay this tour any time with the <strong>?</strong> button.</p>` +
+        `<p>In the <strong>Web</strong> layout you can also <strong>drag a node</strong> to ` +
+        `reposition it — it stays pinned where you drop it (dashed ring), and ` +
+        `<strong>double-click</strong> unpins it.</p>`,
       target: "#cm-levels",
     },
   ];
@@ -1312,6 +1595,10 @@
       webPos = new Map();    // fresh graph: web positions reseed from hashes
       webSig = "";
       webAnim++;
+      webShown = null;
+      webEdges = null;
+      pinsKey = pinsStorageKey(name, nodes, rels);
+      loadPins();            // user pins for THIS graph survive reloads
       syncLayoutButtons();   // reflect the persisted Tree|Web choice
       searchInput.value = "";
       matchCountEl.hidden = true;
@@ -1336,6 +1623,10 @@
       webPos = new Map();
       webSig = "";
       webAnim++;
+      webShown = null;
+      webEdges = null;
+      webPins = new Map();
+      pinsKey = "";
       vp.innerHTML = "";
       statsEl.innerHTML = "";
       visibleEl.textContent = "";

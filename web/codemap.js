@@ -78,6 +78,7 @@
   let webSig = "";        // signature of the visible set the sim last ran for
   let webAnim = 0;        // settle-animation token; bump to cancel a running one
   let webPins = new Map(); // tree id -> {x, y} user-pinned positions (drag-to-move)
+  let dragNodeId = null; // node currently in hand mid-drag (paint feedback only)
   let pinsKey = "";        // localStorage key for the current graph's pins
   let webShown = null;     // last-painted web slice (for cheap drag repaints)
   let webEdges = null;
@@ -675,15 +676,21 @@
     // Animated settle: a synchronous head so the first frame is already
     // roughly shaped, then rAF chunks. Total tick count — and the final
     // overlap-resolution pass — is identical to the synchronous path, so
-    // the final picture is the same.
+    // the final picture is the same. Head and chunk scale with the budget
+    // (300-tick fresh layout keeps its 60/20 split; the 90-tick drop or
+    // expand re-settle gets 18/6) — with a fixed 60-tick head, a pin-drop
+    // swallowed ~94% of the neighbor motion into one snapped frame
+    // (~100px jump, then two ~6px frames); proportional pacing spreads the
+    // same ticks over ~12 frames so neighbors visibly glide into place.
     let t = 0;
-    const head = Math.min(ticks, 60);
+    const head = Math.min(ticks, Math.ceil(ticks / 5));
     for (; t < head; t++) webTick(px, py, qv, springs, hubOf, pinned, cutoff, webAlpha(t, ticks));
     if (t >= ticks) { finish(); return; } // caller paints the final frame
     commit();
+    const chunkTicks = Math.max(6, Math.ceil(ticks / 15));
     const chunk = () => {
       if (token !== webAnim || layoutMode !== "web") return; // superseded
-      const end = Math.min(ticks, t + 20);
+      const end = Math.min(ticks, t + chunkTicks);
       for (; t < end; t++) webTick(px, py, qv, springs, hubOf, pinned, cutoff, webAlpha(t, ticks));
       if (t >= ticks) {
         finish();
@@ -702,13 +709,19 @@
    * ================================================================== */
   function applyT() {
     vp.setAttribute("transform", `translate(${T.x},${T.y}) scale(${T.k})`);
-    // Label LOD for dense web views: zoomed far out, symbol/file (then
-    // unit) labels fade away instead of piling into an unreadable smear;
-    // zooming back in reveals them smoothly (CSS opacity transition).
-    // Only web-drawn nodes carry the cm-w-* classes the CSS keys on, so
-    // tree mode is untouched.
+    // Label LOD for dense web views: each label tier fades out (CSS
+    // opacity) below the zoom where its text can actually resolve, instead
+    // of piling into an unreadable smear. Breakpoints are pure functions of
+    // k, calibrated on the eShop graph (3355 nodes @ 1200×800): mean
+    // nearest-neighbor spacing at fit is ~52 graph px for units, ~24 for
+    // files, ~12 for symbols — so units read from ~0.45 (5px text, clear of
+    // neighbors), files from ~0.7 (8px text, spacing ≈ 17px), and symbols
+    // only from ~1.1 (11px text, spacing ≈ 13px). Below each point the tier
+    // was sub-legible smear, not information. Only web-drawn nodes carry
+    // the cm-w-* classes the CSS keys on, so tree mode is untouched.
     if (svg.dataset) {
-      svg.dataset.z = T.k < 0.28 ? "far" : T.k < 0.55 ? "mid" : "near";
+      svg.dataset.z =
+        T.k < 0.45 ? "far" : T.k < 0.7 ? "mid" : T.k < 1.1 ? "near" : "close";
     }
   }
 
@@ -784,6 +797,10 @@
       const cls = ["cm-node", "cm-w-" + n.type];
       if (selectedId === n.id) cls.push("selected");
       if (pinnedHere) cls.push("pinned");
+      // Mid-drag only (null outside a drag, so settled paints are
+      // byte-identical): the node in hand keeps hover-grade emphasis and
+      // an always-on label while the pointer is captured.
+      if (dragNodeId === n.id) cls.push("dragging");
       if (matchSet) cls.push(matchSet.has(n) ? "match" : "dim");
       if (prevShown.size && !prevShown.has(n.id)) cls.push("fresh");
       const count = collapsed && n.nsyms ? ` <tspan fill="var(--text-faint)">·${n.nsyms}</tspan>` : "";
@@ -1153,7 +1170,13 @@
       return;
     }
     const g = vp.querySelector(`[data-id="${n.id}"]`);
-    if (g) g.setAttribute("transform", `translate(${r2(n.x)},${r2(n.y)})`);
+    if (g) {
+      g.setAttribute("transform", `translate(${r2(n.x)},${r2(n.y)})`);
+      // No full repaint on this path, so the mid-drag class is applied
+      // straight to the live element (idempotent; the post-drop redraw
+      // rebuilds the markup without it).
+      if (g.classList) g.classList.add("dragging");
+    }
   }
 
   let drag = null;
@@ -1182,7 +1205,10 @@
       dragMoved = true; // only now is it a drag, not a click
       wrap.classList.add(drag.node ? "dragging-node" : "grabbing");
       try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
-      if (drag.node) webAnim++; // a running settle animation must not fight the hand
+      if (drag.node) {
+        webAnim++; // a running settle animation must not fight the hand
+        dragNodeId = drag.node.id; // paint feedback on the node in hand
+      }
     }
     if (dragMoved) {
       if (drag.node) {
@@ -1203,6 +1229,7 @@
     const wasClick = drag && !dragMoved && downId;
     const draggedNode = drag && dragMoved ? drag.node : null;
     drag = null;
+    dragNodeId = null; // the re-settle repaint below drops the mid-drag class
     wrap.classList.remove("grabbing");
     wrap.classList.remove("dragging-node");
     try { wrap.releasePointerCapture(e.pointerId); } catch (_) {}

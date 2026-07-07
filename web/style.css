@@ -920,15 +920,23 @@ body.codemap-mode #btn-clear { display: none; }
 }
 .cm-node .pindot { fill: var(--accent); }
 
-/* Label LOD for dense web views: zoomed far out, symbol/file (then unit)
-   labels fade instead of piling into a smear; zoom back in and they return.
+/* Label LOD for dense web views: each tier's labels fade in only at the
+   zoom where its text can resolve (breakpoints live in applyT(), derived
+   from measured neighbor spacing on the 3355-node eShop graph):
+     far  (k<0.45)      domain labels only
+     mid  (0.45–0.7)    + unit labels
+     near (0.7–1.1)     + file labels
+     close (k≥1.1)      + symbol labels
+   Below each point that tier rendered as sub-legible smear, not text.
    Only web-mode nodes carry cm-w-* classes, so the tidy tree keeps its
-   column-guarded labels at every zoom. Hover/selection/search matches stay
-   labeled at any zoom — you never lose the thing you're pointing at. */
+   column-guarded labels at every zoom. Hover/selection/search matches and
+   the node in hand stay labeled at any zoom — you never lose the thing
+   you're pointing at. */
 #cm-svg .cm-node text.lbl { transition: opacity 0.18s ease; }
 @media (prefers-reduced-motion: reduce) {
   #cm-svg .cm-node text.lbl { transition: none; }
 }
+#cm-svg[data-z="near"] .cm-w-sym text.lbl,
 #cm-svg[data-z="mid"] .cm-w-sym text.lbl,
 #cm-svg[data-z="mid"] .cm-w-file text.lbl,
 #cm-svg[data-z="far"] .cm-w-sym text.lbl,
@@ -939,9 +947,18 @@ body.codemap-mode #btn-clear { display: none; }
 #cm-svg[data-z] .cm-node:hover text.lbl,
 #cm-svg[data-z] .cm-node:focus-visible text.lbl,
 #cm-svg[data-z] .cm-node.selected text.lbl,
-#cm-svg[data-z] .cm-node.match text.lbl {
+#cm-svg[data-z] .cm-node.match text.lbl,
+#cm-svg[data-z] .cm-node.dragging text.lbl {
   opacity: 1;
 }
+/* Mid-drag feedback: hover styling doesn't follow a captured pointer, so
+   the node in hand carries .dragging for the duration — same emphasis as
+   hover (accent label, firmer dot stroke), full opacity even when a search
+   has dimmed it, and the label override above so you can always read what
+   you're holding. The pin ring itself appears only on drop. */
+.cm-node.dragging { opacity: 1; }
+.cm-node.dragging .dot { stroke-width: 2.4; }
+.cm-node.dragging text.lbl { fill: var(--accent); }
 @media (prefers-reduced-motion: no-preference) {
   .cm-weblink.fresh, .cm-depweb.fresh { animation: cm-fade 0.22s ease both; }
 }

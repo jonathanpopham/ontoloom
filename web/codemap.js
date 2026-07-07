@@ -323,7 +323,15 @@
     bigN: 1200,
     animMaxN: 400,      // never animate the settle above this node count
     sepPad: 12,         // min-separation: label allowance beyond touching dots
-    sepPasses: 24,      // constraint-relaxation passes after the sim settles
+    // Constraint-relaxation passes after the sim settles. Sized on the
+    // 3355-node eShop graph: 24 passes left 223 pairs of dots actually
+    // intersecting (stacked nodes you can't see or click under); 96 gets
+    // that to 10 for ~7% more layout time (3.33s → 3.56s). Smaller slices
+    // converge and early-exit long before the budget (units LOD: pass 1),
+    // so they pay nothing. sepPad itself never binds below the symbols
+    // LOD — measured nearest-neighbor gap at units LOD is 28.5px minimum,
+    // repulsion alone clears the 12px floor with headroom.
+    sepPasses: 96,
   };
 
   // One dot radius per node type — shared by both renderers and the
@@ -1496,7 +1504,9 @@
         `recenter. Replay this tour any time with the <strong>?</strong> button.</p>` +
         `<p>In the <strong>Web</strong> layout you can also <strong>drag a node</strong> to ` +
         `reposition it — it stays pinned where you drop it (dashed ring), and ` +
-        `<strong>double-click</strong> unpins it.</p>`,
+        `<strong>double-click</strong> unpins it. Same thing from the keyboard: ` +
+        `<strong>arrow keys</strong> nudge the focused node (Shift steps bigger) and ` +
+        `<strong>P</strong> pins or unpins it.</p>`,
       target: "#cm-levels",
     },
   ];

@@ -32,13 +32,23 @@ for (const id of ["cm-wrap", "cm-svg", "cm-viewport", "cm-detail", "cm-stats", "
   els[id] = stubEl(id);
 }
 global.document = {
-  getElementById: (id) => els[id],
+  // Auto-create stubs for ids added after this harness was written (tour, deps, layout…)
+  getElementById: (id) => (els[id] || (els[id] = stubEl(id))),
   querySelectorAll: () => [],
+  addEventListener() {},
+  removeEventListener() {},
+  activeElement: null,
 };
 global.window = global;
+global.localStorage = {
+  _s: {},
+  getItem(k) { return Object.prototype.hasOwnProperty.call(this._s, k) ? this._s[k] : null; },
+  setItem(k, v) { this._s[k] = String(v); },
+  removeItem(k) { delete this._s[k]; },
+};
 global.requestAnimationFrame = (fn) => fn();
 
-const src = fs.readFileSync("/Users/jag/geist/ontoloom-ui/web/codemap.js", "utf8");
+const src = fs.readFileSync(path.join(__dirname, "..", "..", "web", "codemap.js"), "utf8");
 eval(src);
 
 const data = JSON.parse(fs.readFileSync(path.join(__dirname, "eshop-hierarchy.ontoloom.json"), "utf8"));
@@ -69,9 +79,15 @@ assert(els["cm-stats"].innerHTML.includes("21") && els["cm-stats"].innerHTML.inc
   "stats strip shows 21 domains and 2,685 symbols");
 
 // 3. Lazy expand: clicking a domain reveals ONLY its direct children (units)
-const click = els["cm-viewport"]._listeners.click[0];
+// H9 moved node clicks to pointerdown/pointerup on cm-wrap (drag support);
+// drive the same event path a real pointer takes.
+function fire(el, type, ev) { for (const fn of el._listeners[type] || []) fn(ev); }
 function clickNode(tid) {
-  click({ target: { closest: () => ({ dataset: { id: tid } }) } });
+  fire(els["cm-wrap"], "pointerdown", {
+    target: { closest: (sel) => (sel === ".cm-node" ? { dataset: { id: tid } } : null) },
+    clientX: 10, clientY: 10, pointerId: 1,
+  });
+  fire(els["cm-wrap"], "pointerup", { target: { closest: () => null }, clientX: 10, clientY: 10, pointerId: 1 });
 }
 // t0 = synthesized root, t1 = first domain (Animation)
 clickNode("t1");

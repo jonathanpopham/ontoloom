@@ -12,8 +12,15 @@
  * The big-graph strategy: the viewer never renders the whole graph. It keeps
  * one collapse bit per tree node and lays out + draws only the expanded
  * slice, so a 20k-node repo stays a ~10-node picture until you drill in.
- * Everything starts collapsed at the domain level; clicking a node expands
- * only its direct children, never the whole subtree.
+ * Everything starts collapsed at the domain level, and DRILL-DOWN IS THE
+ * ONLY NAVIGATION: clicking a node expands its direct children, clicking it
+ * again folds them away, and search auto-opens the path to its matches.
+ * There is no bulk expand-to-level — a whole repo unfolded to files or
+ * symbols is unreadable, so the map never offers it.
+ *
+ * The force-directed WEB layout is the default face of the map; the tidy
+ * TREE is the alternate, one toggle away. The choice persists per browser
+ * (localStorage) once the user flips it.
  *
  * Vanilla JS, no dependencies, airgap-safe — same rules as the rest of the
  * Ontoloom front-end. This file only reads the graph; it never mutates the
@@ -41,8 +48,17 @@
   ];
   const KIND_COLOR = { T: "var(--cm-type)", F: "var(--cm-func)", C: "var(--cm-const)" };
   const KIND_LABEL = { T: "type", F: "function", C: "const" };
-  const COL = [0, 130, 350, 590, 810]; // x column per depth: root..symbol
-  const ROW = 19;                      // vertical rhythm of the tidy tree
+  /* Tidy-tree metrics. Rows sit 24px apart so 18px-tall label boxes keep
+   * clear air between lines (19px used to leave 1px — labels read as
+   * touching). Column x positions are DYNAMIC: recomputed by layout() from
+   * the widest visible label per depth, so long file names get the room
+   * they need instead of colliding or being truncated to stumps. */
+  const ROW = 24;             // vertical rhythm of the tidy tree
+  const TREE_CHARW = 7;       // estimated glyph width the renderer budgets per char
+  const TREE_GAP_PAD = 45;    // dot + label offset + breathing room inside a gap
+  const TREE_GAP_MIN = 130;   // a depth gap never shrinks below this
+  const TREE_MAX_CHARS = 34;  // truncation cap for tree labels
+  let colX = [0, 130, 350, 590, 810]; // x column per depth root..symbol (recomputed per layout)
 
   /* ---- DOM handles (all inside the #codemap subtree; the manual editor's
    *      DOM is never touched from here) ---- */
@@ -72,8 +88,13 @@
 
   /* ---- Web (force-directed) layout state ---- */
   const LAYOUT_KEY = "ontoloom.cmLayout";
-  let layoutMode = "tree"; // "tree" | "web" — persisted across sessions
-  try { if (localStorage.getItem(LAYOUT_KEY) === "web") layoutMode = "web"; } catch (_) {}
+  // WEB is the default face of the code map; TREE is the alternate. An
+  // explicit toggle persists per browser and wins on every later load.
+  let layoutMode = "web"; // "tree" | "web"
+  try {
+    const v = localStorage.getItem(LAYOUT_KEY);
+    if (v === "tree" || v === "web") layoutMode = v;
+  } catch (_) {}
   let webPos = new Map(); // tree id -> {x, y} settled force-sim position
   let webSig = "";        // signature of the visible set the sim last ran for
   let webAnim = 0;        // settle-animation token; bump to cancel a running one
@@ -159,9 +180,9 @@
     // Infrastructure groups (properties.kind === "infrastructure": the named
     // homes TrailTracker gives scaffold/docs/generated/root files — Build &
     // Tooling, Documentation, Generated, Repo root, each with a `reason`)
-    // render muted and stay collapsed when the level buttons expand the map,
-    // so the colored circles remain the story of what the software DOES.
-    // Click one and it opens like any other domain.
+    // render muted and sink below the business domains, so the colored
+    // circles remain the story of what the software DOES. Click one and it
+    // drills open like any other domain.
     const INFRA_COLOR = "#6b7793";
 
     const domTree = new Map(); // domain wire id -> tree node
@@ -254,23 +275,57 @@
   /* ====================================================================
    * Collapse state + layout (horizontal tidy tree over VISIBLE nodes only)
    * ================================================================== */
-  function setDepth(d) {
+  // The starting posture of every freshly loaded map: root open, everything
+  // else folded. From here the ONLY way deeper is drilling node by node
+  // (or a search opening the path to its matches).
+  function collapseToDomains() {
     (function walk(n) {
       if (n.children.length) {
-        // Infrastructure groups stay collapsed under bulk expansion — build
-        // scripts and generated files are named, not noisy. A direct click
-        // still opens them.
-        n._collapsed = n.depth >= d || (n.type === "domain" && n.infra === true);
+        n._collapsed = n.depth >= 1;
         n.children.forEach(walk);
       }
     })(root);
   }
 
+  // How many characters this node's tree label paints (count badge included).
+  function treeLabelChars(n) {
+    const hasKids = n.children.length > 0;
+    const collapsed = hasKids && n._collapsed;
+    let c = Math.min(TREE_MAX_CHARS, n.name.length);
+    if (collapsed && n.nsyms) c += String(n.nsyms).length + 2; // " ·N"
+    return c;
+  }
+
   let yCursor = 0;
   function layout(n) {
+    // Dynamic columns: each depth gap is sized to the widest visible label
+    // that must live inside it — the right-anchored labels of the
+    // collapsed/leaf nodes on its left edge, and the left-anchored labels
+    // of the expanded parents on its right edge. Deep drills with long
+    // file names get wide columns; a domains-only view stays compact.
+    // Deterministic: a pure function of the visible slice.
+    const need = [0, 0, 0, 0]; // required label chars per gap (gap g = colX[g]→colX[g+1])
+    (function scan(node) {
+      const kids = node._collapsed || !node.children.length ? [] : node.children;
+      const colIdx = Math.min(node.depth, colX.length - 1);
+      const chars = treeLabelChars(node);
+      if (kids.length) {
+        // expanded parent: labels LEFT into the gap behind it
+        if (node.depth >= 1) need[colIdx - 1] = Math.max(need[colIdx - 1], chars);
+      } else if (colIdx < colX.length - 1) {
+        // collapsed/leaf: labels RIGHT into the gap ahead of it
+        need[colIdx] = Math.max(need[colIdx], chars);
+      }
+      kids.forEach(scan);
+    })(n);
+    colX = [0];
+    for (let g = 0; g < 4; g++) {
+      colX[g + 1] = colX[g] + Math.max(TREE_GAP_MIN, need[g] * TREE_CHARW + TREE_GAP_PAD);
+    }
+
     yCursor = 0;
     (function place(node) {
-      node.x = COL[Math.min(node.depth, COL.length - 1)];
+      node.x = colX[Math.min(node.depth, colX.length - 1)];
       const kids = node._collapsed || !node.children.length ? [] : node.children;
       if (!kids.length) {
         node.y = yCursor;
@@ -332,7 +387,36 @@
     // LOD — measured nearest-neighbor gap at units LOD is 28.5px minimum,
     // repulsion alone clears the 12px floor with headroom.
     sepPasses: 96,
+    /* Label-aware separation (H10). The dot pass above keeps CIRCLES apart;
+     * labels are wide rectangles hanging off each dot's right side and they
+     * still collided (63 overlapping label pairs on the drilled eShop
+     * domains). A second constraint pass treats every node as its label BOX
+     * (dot ∪ text estimate) and pushes intersecting boxes apart along the
+     * axis of least penetration — labels are short and wide, so in practice
+     * nodes shuffle vertically into clean rows. Only run up to lblRectMaxN
+     * visible nodes: past that, hard box separation would smear the
+     * clusters, and the priority label-fade in drawWeb() takes over as the
+     * guarantee instead. */
+    lblPad: 3,          // clear air demanded between label boxes (px)
+    lblRectPasses: 128, // fixed budget; early-exits on convergence
+    lblRectMaxN: 600,   // above this, fade — don't separate — the labels
+    // Over-relaxation: each resolution pushes 1.9× the penetration. Plain
+    // resolution (1.0×) crept at ~0.99/pass on the drilled eShop slice —
+    // 45 label pairs still interlocked after 64 passes, 27 after 256. At
+    // 1.9× the same slice converges to ZERO overlapping pairs inside 64
+    // passes with no bbox blow-up (measured: 1014×1079 vs 994×1125).
+    lblSor: 1.9,
   };
+
+  const LBL_CHARW = 7;      // same per-char width estimate the renderer uses
+  const LBL_HALF_H = 9;     // label box half-height (18px line, 11.5px text)
+  const WEB_LBL_TRUNC = 26; // web labels truncate at 26 chars (drawWeb)
+  // Sub-pixel overlaps are treated as separated, and every resolution pushes
+  // this much PAST touching. Without the slack, resolved pairs land exactly
+  // on the boundary: float residue (±1e-13) kept re-flagging them, cascade
+  // nudges of <1px never damped, and the pass oscillated at ~55 "overlaps"
+  // forever (measured on the drilled eShop slice) — all of them invisible.
+  const LBL_EPS = 0.5;
 
   // One dot radius per node type — shared by both renderers and the
   // collision pass so "overlap" means the same thing everywhere.
@@ -619,6 +703,165 @@
     }
   }
 
+  /* ---- Label geometry (web mode) ----
+   * One estimate shared by the rect separation pass, the priority fade,
+   * and the harness assertions, so "label overlap" means the same thing
+   * everywhere. The box is the dot plus the text hanging off its right:
+   *   x: -(r+4)  →  (r+7) + chars·7
+   *   y: ±max(9, r+4)
+   * (r+4 covers the selection/collapse rings; 9 is half the 18px line.) */
+  function webLabelChars(n) {
+    const hasKids = n.children.length > 0;
+    const collapsed = hasKids && n._collapsed;
+    let c = Math.min(WEB_LBL_TRUNC, n.name.length);
+    if (collapsed && n.nsyms) c += String(n.nsyms).length + 2; // " ·N"
+    return c;
+  }
+  function webLabelExtents(n) {
+    const r = nodeR(n);
+    const pad = WEB.lblPad;
+    return {
+      x0: -(r + 4 + pad),
+      x1: r + 7 + webLabelChars(n) * LBL_CHARW + pad,
+      y: Math.max(LBL_HALF_H, r + 4) + pad,
+    };
+  }
+
+  // Label-aware separation — the H10 collision resolver. Runs AFTER the
+  // dot pass: every visible node becomes its label box, and intersecting
+  // boxes are pushed apart along the axis of least penetration (labels are
+  // wide and short, so the push is almost always a small vertical shuffle
+  // that reads as labels stacking into rows). Grid-bucketed by box center
+  // (cell = the widest box, so any intersecting pair shares a 3×3
+  // neighborhood) and fully deterministic: fixed pass budget, ascending
+  // index order, ties broken by index, no randomness. Pinned nodes (root +
+  // user pins) never move — their partner takes the full push; a
+  // pinned-pinned collision is left for the fade pass to hide.
+  function resolveLabelRects(px, py, shown, pinned) {
+    const n = px.length;
+    if (n > WEB.lblRectMaxN) return;
+    const ex0 = new Float64Array(n);
+    const ex1 = new Float64Array(n);
+    const ey = new Float64Array(n);
+    let cell = 1;
+    for (let i = 0; i < n; i++) {
+      const e = webLabelExtents(shown[i]);
+      ex0[i] = e.x0; ex1[i] = e.x1; ey[i] = e.y;
+      if (e.x1 - e.x0 > cell) cell = e.x1 - e.x0;
+    }
+    for (let pass = 0; pass < WEB.lblRectPasses; pass++) {
+      const grid = new Map();
+      const cx = new Int32Array(n);
+      const cy = new Int32Array(n);
+      for (let i = 0; i < n; i++) {
+        cx[i] = Math.floor((px[i] + (ex0[i] + ex1[i]) / 2) / cell);
+        cy[i] = Math.floor(py[i] / cell);
+        const key = cx[i] + ":" + cy[i];
+        const b = grid.get(key);
+        if (b) b.push(i);
+        else grid.set(key, [i]);
+      }
+      let moved = false;
+      for (let i = 0; i < n; i++) {
+        for (let gx = cx[i] - 1; gx <= cx[i] + 1; gx++) {
+          for (let gy = cy[i] - 1; gy <= cy[i] + 1; gy++) {
+            const b = grid.get(gx + ":" + gy);
+            if (!b) continue;
+            for (const j of b) {
+              if (j <= i) continue;
+              if (pinned[i] && pinned[j]) continue;
+              const ox = Math.min(px[i] + ex1[i], px[j] + ex1[j]) - Math.max(px[i] + ex0[i], px[j] + ex0[j]);
+              if (ox <= LBL_EPS) continue;
+              const oy = Math.min(py[i] + ey[i], py[j] + ey[j]) - Math.max(py[i] - ey[i], py[j] - ey[j]);
+              if (oy <= LBL_EPS) continue;
+              // Minimal translation, over-relaxed: separate along the
+              // shallower axis, pushing lblSor× the penetration plus
+              // LBL_EPS past touching so cascades damp instead of cycling.
+              let axV, dir;
+              if (oy <= ox) {
+                axV = oy * WEB.lblSor + LBL_EPS;
+                dir = py[j] >= py[i] ? 1 : -1; // j >= i on ties: deterministic
+              } else {
+                axV = ox * WEB.lblSor + LBL_EPS;
+                const ci = px[i] + (ex0[i] + ex1[i]) / 2;
+                const cj = px[j] + (ex0[j] + ex1[j]) / 2;
+                dir = cj >= ci ? 1 : -1;
+              }
+              if (pinned[i]) {
+                if (oy <= ox) py[j] += dir * axV; else px[j] += dir * axV;
+              } else if (pinned[j]) {
+                if (oy <= ox) py[i] -= dir * axV; else px[i] -= dir * axV;
+              } else {
+                const h = axV / 2;
+                if (oy <= ox) { py[i] -= dir * h; py[j] += dir * h; }
+                else { px[i] -= dir * h; px[j] += dir * h; }
+              }
+              moved = true;
+            }
+          }
+        }
+      }
+      if (!moved) break; // converged early — deterministic either way
+    }
+  }
+
+  // Priority label fade — the fallback guarantee. Where label boxes STILL
+  // intersect after (or instead of, above lblRectMaxN) the separation
+  // pass, the higher-value node keeps its label and the other fades until
+  // hover/selection/search brings it back (CSS class "lblfade"; the dot
+  // always stays). Priority: root > domain > unit > file > symbol, bigger
+  // subtree first inside a rank, tree id as the deterministic tie-break.
+  const LBL_RANK = { root: 0, domain: 1, unit: 2, file: 3, sym: 4 };
+  function computeLabelFades(shown) {
+    const faded = new Set();
+    const order = shown
+      .map((_, i) => i)
+      .sort((a, b) => {
+        const A = shown[a], B = shown[b];
+        const r = LBL_RANK[A.type] - LBL_RANK[B.type];
+        if (r) return r;
+        if (A.nsyms !== B.nsyms) return B.nsyms - A.nsyms;
+        return A.id < B.id ? -1 : 1;
+      });
+    const cell = 260; // ≥ the widest possible label box
+    const grid = new Map();
+    for (const i of order) {
+      const nd = shown[i];
+      const e = webLabelExtents(nd);
+      const x0 = nd.x + e.x0, x1 = nd.x + e.x1;
+      const y0 = nd.y - e.y, y1 = nd.y + e.y;
+      const gx0 = Math.floor(x0 / cell), gx1 = Math.floor(x1 / cell);
+      const gy0 = Math.floor(y0 / cell), gy1 = Math.floor(y1 / cell);
+      let hit = false;
+      for (let gx = gx0; gx <= gx1 && !hit; gx++) {
+        for (let gy = gy0; gy <= gy1 && !hit; gy++) {
+          const b = grid.get(gx + ":" + gy);
+          if (!b) continue;
+          for (const q of b) {
+            // Same epsilon as the separation pass: a sub-pixel graze on the
+            // padded boxes is not a collision worth hiding a label over.
+            if (x0 + LBL_EPS < q[2] && q[0] + LBL_EPS < x1 &&
+                y0 + LBL_EPS < q[3] && q[1] + LBL_EPS < y1) { hit = true; break; }
+          }
+        }
+      }
+      if (hit) {
+        faded.add(nd.id);
+        continue;
+      }
+      const box = [x0, y0, x1, y1];
+      for (let gx = gx0; gx <= gx1; gx++) {
+        for (let gy = gy0; gy <= gy1; gy++) {
+          const key = gx + ":" + gy;
+          const b = grid.get(key);
+          if (b) b.push(box);
+          else grid.set(key, [box]);
+        }
+      }
+    }
+    return faded;
+  }
+
   // Geometric cooling: alpha at tick t of T total, from a0 down to aMin.
   function webAlpha(t, total) {
     const a0 = 0.6, aMin = 0.05;
@@ -663,9 +906,12 @@
       for (let i = 0; i < n; i++) webPos.set(shown[i].id, { x: px[i], y: py[i] });
       for (let i = 0; i < n; i++) { shown[i].x = px[i]; shown[i].y = py[i]; }
     };
-    // The last word after the sim: resolve residual overlaps, then commit.
+    // The last word after the sim: resolve residual dot overlaps, then
+    // label-box overlaps, then commit. (drawWeb's priority fade covers
+    // whatever the budgets or pinned-pinned pairs leave behind.)
     const finish = () => {
       resolveOverlaps(px, py, rv, pinned);
+      resolveLabelRects(px, py, shown, pinned);
       commit();
     };
 
@@ -795,6 +1041,9 @@
         }
       }
     }
+    // Priority fade: labels whose boxes still intersect a higher-value
+    // node's label give way (dot stays; hover/selection/search restores).
+    const lblFades = computeLabelFades(shown);
     for (const n of shown) {
       const hasKids = n.children.length > 0;
       const collapsed = hasKids && n._collapsed;
@@ -803,6 +1052,7 @@
       const fill = collapsed ? col : hasKids ? "var(--bg)" : col;
       const pinnedHere = webPins.has(n.id);
       const cls = ["cm-node", "cm-w-" + n.type];
+      if (lblFades.has(n.id)) cls.push("lblfade");
       if (selectedId === n.id) cls.push("selected");
       if (pinnedHere) cls.push("pinned");
       // Mid-drag only (null outside a drag, so settled paints are
@@ -815,7 +1065,7 @@
       const lx = r + 7;
       // In a web there are no columns to guard — labels always sit to the
       // right of the dot, truncated so dense clusters stay legible.
-      const shownName = truncate(n.name, 26);
+      const shownName = truncate(n.name, WEB_LBL_TRUNC);
       const estW = shownName.length * 7 + 30;
       const aria =
         ` role="button" tabindex="0" aria-label="${esc(n.name)}, ${KICK[n.type]}` +
@@ -949,14 +1199,14 @@
       // siblings: nothing else is visible when it's collapsed) and the last
       // column (nothing to its right) keep the generous cap.
       const labelLeft = hasKids && !collapsed;
-      const colIdx = Math.min(n.depth, COL.length - 1);
-      let maxChars = 34;
+      const colIdx = Math.min(n.depth, colX.length - 1);
+      let maxChars = TREE_MAX_CHARS;
       if (labelLeft) {
-        const gapLeft = n.depth === 0 ? Infinity : COL[colIdx] - COL[colIdx - 1];
-        maxChars = Math.max(8, Math.min(34, Math.floor((gapLeft - 45) / 7)));
-      } else if (n.depth >= 1 && colIdx < COL.length - 1) {
-        const gapRight = COL[colIdx + 1] - COL[colIdx];
-        maxChars = Math.max(8, Math.min(34, Math.floor((gapRight - 45) / 7)));
+        const gapLeft = n.depth === 0 ? Infinity : colX[colIdx] - colX[colIdx - 1];
+        maxChars = Math.max(8, Math.min(TREE_MAX_CHARS, Math.floor((gapLeft - TREE_GAP_PAD) / TREE_CHARW)));
+      } else if (n.depth >= 1 && colIdx < colX.length - 1) {
+        const gapRight = colX[colIdx + 1] - colX[colIdx];
+        maxChars = Math.max(8, Math.min(TREE_MAX_CHARS, Math.floor((gapRight - TREE_GAP_PAD) / TREE_CHARW)));
       }
       const shownName = truncate(n.name, maxChars);
       const estW = shownName.length * 7 + 30; // rough mono width incl. count
@@ -1095,17 +1345,10 @@
   }
   // Clicks are handled in pointerup (below) so pointer-capture can never steal
   // the target — clicking the dot OR the label anywhere on a node works.
-
-  document.getElementById("cm-levels").addEventListener("click", (e) => {
-    const b = e.target.closest("button");
-    if (!b || !root) return;
-    document
-      .querySelectorAll("#cm-levels button")
-      .forEach((x) => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
-    setDepth(+b.dataset.d);
-    render();
-    fit();
-  });
+  //
+  // (H10: the Domains/Units/Files/Symbols bulk-expand buttons are gone.
+  // Drill-down is the only navigation — a whole repo unfolded to files or
+  // symbols was an unreadable smear, so the map no longer offers it.)
 
   let qt = null;
   searchInput.addEventListener("input", (e) => {
@@ -1354,8 +1597,9 @@
       // No left-anchored labels in the web — pad for right labels only.
       minX -= 80; maxX += 220; minY -= 40; maxY += 40;
     } else {
-      // Left padding covers the left-anchored labels of expanded parents.
-      minX -= 250; maxX += 260; minY -= 30; maxY += 30;
+      // Left padding covers the left-anchored labels of expanded parents;
+      // right covers a full 34-char label in the last column.
+      minX -= 270; maxX += 290; minY -= 30; maxY += 30;
     }
     const r = svg.getBoundingClientRect();
     if (!r.width || !r.height) return; // pane not visible yet
@@ -1496,18 +1740,20 @@
     {
       title: "Getting around",
       body:
-        `<p><strong>Click</strong> a node to expand its children; click it again to fold them ` +
-        `all away. The <strong>Domains / Units / Files / Symbols</strong> buttons expand the ` +
-        `whole map to that depth at once.</p>` +
+        `<p><strong>Click</strong> a node to open its children; click it again to fold them ` +
+        `all away. Drilling in like this — one node at a time — is how you navigate: the map ` +
+        `only ever shows what you have opened, so it stays readable at any size.</p>` +
         `<p><strong>Search</strong> lights up matching files and symbols and opens the path to ` +
         `them. <strong>Drag</strong> to pan, <strong>scroll</strong> to zoom, <strong>Fit</strong> to ` +
         `recenter. Replay this tour any time with the <strong>?</strong> button.</p>` +
-        `<p>In the <strong>Web</strong> layout you can also <strong>drag a node</strong> to ` +
-        `reposition it — it stays pinned where you drop it (dashed ring), and ` +
+        `<p>The map opens as a <strong>Web</strong> — a force-directed view where domains ` +
+        `cluster and dependencies read as lines — and you can <strong>drag a node</strong> to ` +
+        `reposition it: it stays pinned where you drop it (dashed ring), and ` +
         `<strong>double-click</strong> unpins it. Same thing from the keyboard: ` +
         `<strong>arrow keys</strong> nudge the focused node (Shift steps bigger) and ` +
-        `<strong>P</strong> pins or unpins it.</p>`,
-      target: "#cm-levels",
+        `<strong>P</strong> pins or unpins it. The <strong>Tree</strong> toggle switches to a ` +
+        `tidy indented layout when containment matters more than coupling.</p>`,
+      target: "#cm-layout",
     },
   ];
 
@@ -1630,7 +1876,7 @@
     // at the domain level.
     load(name, nodes, rels) {
       buildTree(name, nodes, rels);
-      setDepth(1);
+      collapseToDomains();
       selectedId = null;
       matchSet = null;
       prevShown = new Set(); // fresh graph: first paint arrives without fades
@@ -1646,9 +1892,6 @@
       matchCountEl.hidden = true;
       detail.classList.add("empty");
       detail.innerHTML = EMPTY_DETAIL;
-      document
-        .querySelectorAll("#cm-levels button")
-        .forEach((x) => x.setAttribute("aria-pressed", x.dataset.d === "1" ? "true" : "false"));
       renderStats(nodes);
       render();
       // The pane may have just been unhidden; fit once it has a size.

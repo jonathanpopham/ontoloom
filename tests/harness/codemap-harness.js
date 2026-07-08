@@ -1,5 +1,7 @@
 /* Headless harness: run web/codemap.js against the real eShop hierarchy and
- * assert the drill-down data handling (detect / lazy expand / search / detail). */
+ * assert the drill-down data handling (detect / lazy expand / search / detail).
+ * H10: drill-down is the ONLY navigation (no bulk expand-to-level buttons)
+ * and the web layout is the default face of the map. */
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -69,11 +71,13 @@ assert(CodeMap.detect(manual, [{ type: "RELATED_TO", from: "n1", to: "n2" }]) ==
   "does not detect a manual-editor graph");
 assert(CodeMap.detect([], []) === false, "empty graph is not a hierarchy");
 
-// 2. Load: starts collapsed at the domain level
+// 2. Load: starts collapsed at the domain level, in WEB mode by default
 CodeMap.load(data.name, data.nodes, data.relationships);
 const shown0 = parseInt(els["cm-visible"].textContent.replace(/,/g, ""), 10);
 assert(shown0 >= 22 && shown0 <= 25, `starts collapsed near the domain level (${shown0} shown, expected root + ~22 domains)`);
 assert(els["cm-viewport"].innerHTML.includes("cm-node"), "renders nodes into the SVG viewport");
+assert(els["cm-viewport"].innerHTML.includes("cm-w-domain"),
+  "fresh load (no stored preference) paints the WEB layout by default");
 assert(els["cm-stats"].innerHTML.includes("3,270") === false, "stats are per level, not total"); // sanity
 assert(els["cm-stats"].innerHTML.includes("21") && els["cm-stats"].innerHTML.includes("2,685"),
   "stats strip shows 21 domains and 2,685 symbols");
@@ -120,18 +124,39 @@ setTimeout(() => {
   setTimeout(() => {
     assert(!els["cm-viewport"].innerHTML.includes('cm-node dim'), "clearing search removes dimming");
 
-    // 5. Level filter = expand-all-to-depth (simulate the Symbols button by
-    // walking every level button handler path through search-free render)
-    const levels = els["cm-levels"]._listeners.click[0];
-    // stub the button lookup used inside the handler
-    global.document.querySelectorAll = () => [];
-    levels({ target: { closest: () => ({ dataset: { d: "4" } }) } });
-    const shownAll = parseInt(els["cm-visible"].textContent.replace(/,/g, ""), 10);
-    assert(shownAll > 3000, `Symbols level filter expands everything (${shownAll} nodes laid out & rendered)`);
+    // 5. Drill-only navigation (H10): the bulk expand-to-level buttons are
+    // gone from BOTH surfaces — clicking nodes is the only way deeper.
+    assert(!src.includes("cm-levels"), "codemap.js carries no level-button wiring");
+    const indexHtml = fs.readFileSync(path.join(__dirname, "..", "..", "web", "index.html"), "utf8");
+    assert(!/data-d="/.test(indexHtml) && !indexHtml.includes('id="cm-levels"'),
+      "index.html carries no Domains/Units/Files/Symbols buttons");
+    assert(!(els["cm-levels"]._listeners.click || []).length,
+      "nothing listens on the old levels group");
 
-    levels({ target: { closest: () => ({ dataset: { d: "1" } }) } });
-    const shownBack = parseInt(els["cm-visible"].textContent.replace(/,/g, ""), 10);
-    assert(shownBack === shown0, `Domains level filter collapses back to ${shown0}`);
+    // Drill deeper by clicking: search left RedisBasketRepository's path
+    // open, so fold the whole map back down node by node instead — every
+    // domain click collapses its entire subtree.
+    const openDomains = [];
+    const gRe = /<g class="cm-node[^"]*" data-id="(t\d+)"[^>]*aria-label="[^"]*, domain"[^>]*aria-expanded="true"/g;
+    let gm;
+    while ((gm = gRe.exec(els["cm-viewport"].innerHTML))) openDomains.push(gm[1]);
+    for (const id of openDomains) clickNode(id);
+    const shownFolded = parseInt(els["cm-visible"].textContent.replace(/,/g, ""), 10);
+    assert(shownFolded === shown0, `clicking each open domain folds the map back to ${shown0} (got ${shownFolded})`);
+
+    // …and a two-level drill works: domain click reveals units, unit click
+    // reveals files (fresh nodes carry the ids to click next).
+    clickNode("t1");
+    const freshRe = /<g class="cm-node[^"]*fresh[^"]*" data-id="(t\d+)"/;
+    const unitId = (freshRe.exec(els["cm-viewport"].innerHTML) || [])[1];
+    assert(!!unitId, "expanding a domain paints fresh unit nodes to drill into");
+    const beforeUnit = parseInt(els["cm-visible"].textContent.replace(/,/g, ""), 10);
+    clickNode(unitId);
+    const afterUnit = parseInt(els["cm-visible"].textContent.replace(/,/g, ""), 10);
+    assert(afterUnit > beforeUnit, `clicking a unit drills to its files (${beforeUnit} -> ${afterUnit})`);
+    clickNode("t1"); // collapsing the domain folds the whole branch
+    const shownEnd = parseInt(els["cm-visible"].textContent.replace(/,/g, ""), 10);
+    assert(shownEnd === shown0, `collapsing the domain folds the drilled branch (back to ${shownEnd})`);
 
     console.log(failures ? `\n${failures} FAILURES` : "\nALL ASSERTIONS PASSED");
     process.exit(failures ? 1 : 0);

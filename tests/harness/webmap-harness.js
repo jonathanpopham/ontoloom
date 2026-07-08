@@ -1,14 +1,21 @@
-/* Headless harness for the H7 web (force-directed) layout in codemap.js.
+/* Headless harness for the web (force-directed) layout in codemap.js.
  *
  * Runs the real web/codemap.js in an isolated vm sandbox with a DOM stub,
  * drives it with the real eShop hierarchy, and asserts:
- *   1. web layout assigns DISTINCT positions to every visible node
+ *   1. WEB IS THE DEFAULT: a fresh load (no stored preference) paints the
+ *      web layout, with distinct positions for every visible node
  *   2. determinism — two independent runs produce byte-identical SVG
- *   3. expanding a node spawns its children NEAR the parent
- *   4. toggling web -> tree round-trips to the identical tree layout
- *   5. level buttons / search / deps toggle work in web mode
- *   6. domains form clusters (members sit nearest their own hub)
- *   7. localStorage persistence of the chosen mode
+ *   3. a stored "tree" preference is still honored on load
+ *   4. expanding a node spawns its children NEAR the parent
+ *   5. mode toggle round-trips (web -> tree -> web byte-identical web)
+ *      and persists the choice
+ *   6. drill-down + search + deps toggle work in web mode (drilling every
+ *      domain is the only bulk-ish gesture left — no level buttons exist)
+ *   7. domains form clusters at the files depth (reached by search, the
+ *      only legitimate mass-open: "." matches every file's name/path)
+ *   8. full-scale: cumulative searches open thousands of nodes; positions
+ *      stay distinct and NON-FADED labels never overlap (priority fade)
+ *   9. search marks + dims + auto-expands in web mode
  */
 "use strict";
 const fs = require("fs");
@@ -25,6 +32,7 @@ function assert(cond, msg) {
   if (cond) console.log("  ok  " + msg);
   else { failures++; console.log("  FAIL " + msg); }
 }
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
 /* ---- DOM stub world, one per isolated run ---- */
 function makeWorld(storageSeed) {
@@ -58,7 +66,7 @@ function makeWorld(storageSeed) {
   }
   const ids = [
     "cm-wrap", "cm-svg", "cm-viewport", "cm-detail", "cm-stats", "cm-visible",
-    "cm-search", "cm-match-count", "cm-levels", "cm-fit", "cm-deps", "cm-help",
+    "cm-search", "cm-match-count", "cm-fit", "cm-deps", "cm-help",
     "cm-layout", "cm-tour", "cm-tour-title", "cm-tour-body", "cm-tour-dots",
     "cm-tour-back", "cm-tour-next", "cm-tour-skip",
   ];
@@ -66,7 +74,7 @@ function makeWorld(storageSeed) {
   for (const id of ids) els[id] = stubEl(id);
 
   const document = {
-    getElementById: (id) => els[id] || stubEl(id),
+    getElementById: (id) => els[id] || (els[id] = stubEl(id)),
     querySelectorAll: () => [],
     addEventListener() {},
     contains: () => false,
@@ -81,6 +89,7 @@ function makeWorld(storageSeed) {
     localStorage: {
       getItem: (k) => (k in store ? store[k] : null),
       setItem: (k, v) => { store[k] = String(v); },
+      removeItem: (k) => { delete store[k]; },
     },
     Math, JSON,
   };
@@ -97,13 +106,14 @@ function fire(el, type, ev) {
 function clickLayout(w, mode) {
   fire(w.els["cm-layout"], "click", { target: { closest: () => ({ dataset: { m: mode } }) } });
 }
-function clickLevel(w, d) {
-  fire(w.els["cm-levels"], "click", { target: { closest: () => ({ dataset: { d: String(d) } }) } });
-}
 function clickNode(w, tid) {
   const t = { closest: () => ({ dataset: { id: tid } }) };
   fire(w.els["cm-wrap"], "pointerdown", { target: t, clientX: 10, clientY: 10 });
   fire(w.els["cm-wrap"], "pointerup", { target: t, clientX: 10, clientY: 10 });
+}
+async function search(w, q) {
+  fire(w.els["cm-search"], "input", { target: { value: q } });
+  await sleep(260); // past the 160ms debounce
 }
 function positions(w) {
   // data-id -> {x, y} parsed straight out of the painted SVG string
@@ -118,172 +128,217 @@ function positions(w) {
 function shownCount(w) {
   return parseInt(w.els["cm-visible"].textContent.replace(/,/g, ""), 10);
 }
+/* Label boxes (same estimate the renderer uses: 7px/char, 18px line) for
+ * the VISIBLE (non-faded) labels in the painted web SVG. */
+function visibleLabelBoxes(w) {
+  const out = [];
+  const gRe = /<g class="(cm-node[^"]*)" data-id="([^"]+)"[^>]*transform="translate\((-?[\d.]+),(-?[\d.]+)\)">([\s\S]*?)<\/g>/g;
+  let m;
+  while ((m = gRe.exec(w.els["cm-viewport"].innerHTML))) {
+    if (/\blblfade\b/.test(m[1])) continue;
+    const inner = m[5];
+    const txt = /<text class="lbl" x="(-?[\d.]+)"[^>]*>([\s\S]*?)<\/text>/.exec(inner);
+    if (!txt) continue;
+    const x = parseFloat(m[3]), y = parseFloat(m[4]);
+    const lx = parseFloat(txt[1]);
+    const chars = txt[2].replace(/<[^>]+>/g, "").length;
+    out.push({ id: m[2], x0: x + lx, x1: x + lx + chars * 7, y0: y - 9, y1: y + 9 });
+  }
+  return out;
+}
+function labelOverlapPairs(boxes) {
+  let bad = 0;
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const a = boxes[i], b = boxes[j];
+      if (a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1) bad++;
+    }
+  }
+  return bad;
+}
 
 /* ==================================================================== */
-console.log("\n-- 1. distinct positions for every visible node (web mode) --");
-const w1 = makeWorld();
-w1.CodeMap.load(DATA.name, DATA.nodes, DATA.relationships);
-const treeHtmlBefore = w1.els["cm-viewport"].innerHTML;
-clickLayout(w1, "web");
-const webHtml1 = w1.els["cm-viewport"].innerHTML;
-let pos = positions(w1);
-assert(pos.size === shownCount(w1), `every shown node painted (${pos.size} of ${shownCount(w1)})`);
-{
-  const seen = new Set();
-  let dup = 0;
-  for (const [, p] of pos) {
-    const k = p.x + "," + p.y;
-    if (seen.has(k)) dup++;
-    seen.add(k);
-  }
-  assert(dup === 0, `all ${pos.size} visible nodes hold distinct positions`);
-}
-assert(webHtml1.includes("cm-depweb"), "DEPENDS_ON drawn as solid web lines");
-assert(webHtml1.includes("cm-dep-count"), "dep lines carry count labels");
-assert(webHtml1.includes("cm-weblink"), "containment drawn as faint links");
-assert(w1.store["ontoloom.cmLayout"] === "web", "chosen mode persisted to localStorage");
-
-console.log("\n-- 2. determinism: independent run, identical picture --");
-const w2 = makeWorld();
-w2.CodeMap.load(DATA.name, DATA.nodes, DATA.relationships);
-const w2TreeHtml = w2.els["cm-viewport"].innerHTML;
-clickLayout(w2, "web");
-assert(w2.els["cm-viewport"].innerHTML === webHtml1, "two fresh runs paint byte-identical web SVG");
-
-console.log("\n-- 3. expand: children spawn near their parent --");
-const domId = [...pos.keys()].find((id) => id !== "t0"); // first domain
-const before = new Set(pos.keys());
-const parentBefore = pos.get(domId);
-clickNode(w1, domId);
-const pos2 = positions(w1);
-const fresh = [...pos2.keys()].filter((id) => !before.has(id));
-assert(fresh.length > 0, `expanding ${domId} revealed ${fresh.length} children`);
-{
-  const par = pos2.get(domId);
-  let maxD = 0, sum = 0;
-  for (const id of fresh) {
-    const p = pos2.get(id);
-    const d = Math.hypot(p.x - par.x, p.y - par.y);
-    sum += d;
-    if (d > maxD) maxD = d;
-  }
-  const mean = sum / fresh.length;
-  assert(mean < 260, `children settle near the parent (mean ${mean.toFixed(1)}px, max ${maxD.toFixed(1)}px)`);
-  const drift = Math.hypot(par.x - parentBefore.x, par.y - parentBefore.y);
-  assert(drift < 200, `existing layout barely shifts on incremental expand (parent drift ${drift.toFixed(1)}px)`);
-}
-// collapse back — the visible set matches step 1 again
-clickNode(w1, domId);
-assert(positions(w1).size === pos.size, "collapse returns to the previous visible set");
-
-console.log("\n-- 4. toggle round-trip: web -> tree is byte-identical tree --");
-// On the untouched world (no clicks in between that would change selection):
-clickLayout(w2, "tree");
-assert(w2.els["cm-viewport"].innerHTML === w2TreeHtml, "tree layout after round-trip === original tree layout (byte-identical)");
-assert(w2.store["ontoloom.cmLayout"] === "tree", "mode persistence follows the toggle");
-clickLayout(w1, "tree"); // w1 continues in tree mode (selection changed there, so no byte compare)
-void treeHtmlBefore;
-
-console.log("\n-- 5. level buttons, search, deps toggle in web mode --");
-clickLayout(w1, "web");
-clickLevel(w1, 2); // Units
-const posUnits = positions(w1);
-assert(posUnits.size > pos.size, `Units level shows more nodes in web mode (${pos.size} -> ${posUnits.size})`);
-{
-  const seen = new Set();
-  let dup = 0;
-  for (const [, p] of posUnits) { const k = p.x + "," + p.y; if (seen.has(k)) dup++; seen.add(k); }
-  assert(dup === 0, "distinct positions hold at the Units level");
-}
-// deps toggle off removes the solid lines
-fire(w1.els["cm-deps"], "click", {});
-assert(!w1.els["cm-viewport"].innerHTML.includes("cm-depweb"), "deps toggle hides DEPENDS_ON lines in web mode");
-fire(w1.els["cm-deps"], "click", {});
-assert(w1.els["cm-viewport"].innerHTML.includes("cm-depweb"), "deps toggle brings them back");
-
-clickLevel(w1, 1); // back to Domains
-fire(w1.els["cm-search"], "input", { target: { value: "RedisBasketRepository" } });
-const searchDone = new Promise((res) => setTimeout(res, 300));
-
-console.log("\n-- 6. domains form clusters --");
-const w3 = makeWorld({ "ontoloom.cmLayout": "web" });
-w3.CodeMap.load(DATA.name, DATA.nodes, DATA.relationships);
-assert(positions(w3).size === pos.size, "persisted web mode: fresh load opens straight into the web");
-clickLevel(w3, 3); // Files: domains + units + files, the cluster-readability LOD
-const posF = positions(w3);
-{
-  // hubs = the domain nodes; members = everything deeper. A member counts
-  // as "well clustered" when its nearest domain hub is its own ancestor.
-  const treeHtml = w3.els["cm-viewport"].innerHTML;
-  // recover each node's domain by re-walking CodeMap's own expansion state
-  // via aria-labels: instead, use geometry over w3-internal ids — the tree
-  // ids are deterministic (t0 root, domains in build order), so map members
-  // to hubs through the drawn containment links.
-  const links = [];
-  const re = /<line class="cm-weblink[^"]*" x1="(-?[\d.]+)" y1="(-?[\d.]+)" x2="(-?[\d.]+)" y2="(-?[\d.]+)"/g;
-  let m;
-  while ((m = re.exec(treeHtml))) links.push(m.slice(1).map(parseFloat));
-  assert(links.length > 500, `containment links drawn at Files LOD (${links.length})`);
-
-  // hub for every node: BFS over painted links from each domain position
-  const hubs = [];
-  const byPos = new Map();
-  for (const [id, p] of posF) byPos.set(p.x + "," + p.y, id);
-  // domain ids are the direct children of t0 in paint order; find them via
-  // links that touch t0's position
-  const rootP = posF.get("t0");
-  const parentOf = new Map();
-  for (const [x1, y1, x2, y2] of links) {
-    const a = byPos.get(x1 + "," + y1), b = byPos.get(x2 + "," + y2);
-    if (a && b) parentOf.set(b, a);
-  }
-  function hubOf(id) {
-    let cur = id, guard = 0;
-    while (parentOf.has(cur) && parentOf.get(cur) !== "t0" && guard++ < 10) cur = parentOf.get(cur);
-    return parentOf.get(cur) === "t0" ? cur : null;
-  }
-  const hubIds = new Set();
-  for (const id of posF.keys()) { const h = hubOf(id); if (h) hubIds.add(h); }
-  let good = 0, total = 0;
-  for (const id of posF.keys()) {
-    const own = hubOf(id);
-    if (!own || own === id || id === "t0") continue;
-    const p = posF.get(id);
-    let best = null, bestD = Infinity;
-    for (const h of hubIds) {
-      const hp = posF.get(h);
-      const d = Math.hypot(p.x - hp.x, p.y - hp.y);
-      if (d < bestD) { bestD = d; best = h; }
+(async () => {
+  console.log("\n-- 1. web is the DEFAULT: fresh load paints the web, distinct positions --");
+  const w1 = makeWorld();
+  w1.CodeMap.load(DATA.name, DATA.nodes, DATA.relationships);
+  const webHtml1 = w1.els["cm-viewport"].innerHTML;
+  assert(webHtml1.includes("cm-w-domain"), "fresh load (no stored preference) opens in WEB mode");
+  assert(!("ontoloom.cmLayout" in w1.store), "…without writing a preference the user never chose");
+  let pos = positions(w1);
+  assert(pos.size === shownCount(w1), `every shown node painted (${pos.size} of ${shownCount(w1)})`);
+  {
+    const seen = new Set();
+    let dup = 0;
+    for (const [, p] of pos) {
+      const k = p.x + "," + p.y;
+      if (seen.has(k)) dup++;
+      seen.add(k);
     }
-    total++;
-    if (best === own) good++;
+    assert(dup === 0, `all ${pos.size} visible nodes hold distinct positions`);
   }
-  const fracV = total ? good / total : 0;
-  assert(fracV > 0.7, `domain clustering: ${(fracV * 100).toFixed(1)}% of members sit nearest their own domain hub (${good}/${total})`);
-}
+  assert(webHtml1.includes("cm-depweb"), "DEPENDS_ON drawn as solid web lines");
+  assert(webHtml1.includes("cm-dep-count"), "dep lines carry count labels");
+  assert(webHtml1.includes("cm-weblink"), "containment drawn as faint links");
 
-console.log("\n-- 7. symbols LOD: scale + timing --");
-const t0 = Date.now();
-clickLevel(w3, 4);
-const dtBig = Date.now() - t0;
-const posAll = positions(w3);
-{
-  const seen = new Set();
-  let dup = 0;
-  for (const [, p] of posAll) { const k = p.x + "," + p.y; if (seen.has(k)) dup++; seen.add(k); }
-  assert(posAll.size > 3000, `symbols level lays out the full graph (${posAll.size} nodes)`);
-  assert(dup === 0, "distinct positions hold at full scale");
-  assert(dtBig < 15000, `full-scale web sim + paint completed in ${dtBig}ms`);
-  console.log(`     (full sim+paint: ${dtBig}ms for ${posAll.size} nodes)`);
-}
+  console.log("\n-- 2. determinism: independent run, identical picture --");
+  const w2 = makeWorld();
+  w2.CodeMap.load(DATA.name, DATA.nodes, DATA.relationships);
+  assert(w2.els["cm-viewport"].innerHTML === webHtml1, "two fresh runs paint byte-identical web SVG");
 
-searchDone.then(() => {
-  console.log("\n-- 8. search in web mode --");
-  const html = w1.els["cm-viewport"].innerHTML;
-  assert(html.includes("match"), "search marks matches in web mode");
-  assert(html.includes("dim"), "search dims non-matches in web mode");
-  assert(html.includes("RedisBasketRepository"), "search auto-expanded the path to the match");
+  console.log("\n-- 3. a stored 'tree' preference is honored --");
+  {
+    const wt = makeWorld({ "ontoloom.cmLayout": "tree" });
+    wt.CodeMap.load(DATA.name, DATA.nodes, DATA.relationships);
+    const html = wt.els["cm-viewport"].innerHTML;
+    assert(!html.includes("cm-w-domain") && html.includes("cm-edge"),
+      "seeded tree preference: fresh load opens the tidy tree");
+  }
+
+  console.log("\n-- 4. expand: children spawn near their parent --");
+  const domId = [...pos.keys()].find((id) => id !== "t0"); // first domain
+  {
+    const before = new Set(pos.keys());
+    const parentBefore = pos.get(domId);
+    clickNode(w1, domId);
+    const pos2 = positions(w1);
+    const fresh = [...pos2.keys()].filter((id) => !before.has(id));
+    assert(fresh.length > 0, `expanding ${domId} revealed ${fresh.length} children`);
+    const par = pos2.get(domId);
+    let maxD = 0, sum = 0;
+    for (const id of fresh) {
+      const p = pos2.get(id);
+      const d = Math.hypot(p.x - par.x, p.y - par.y);
+      sum += d;
+      if (d > maxD) maxD = d;
+    }
+    const mean = sum / fresh.length;
+    assert(mean < 260, `children settle near the parent (mean ${mean.toFixed(1)}px, max ${maxD.toFixed(1)}px)`);
+    const drift = Math.hypot(par.x - parentBefore.x, par.y - parentBefore.y);
+    assert(drift < 200, `existing layout barely shifts on incremental expand (parent drift ${drift.toFixed(1)}px)`);
+    // collapse back — the visible set matches step 1 again
+    clickNode(w1, domId);
+    assert(positions(w1).size === pos.size, "collapse returns to the previous visible set");
+  }
+
+  console.log("\n-- 5. toggle round-trip: web -> tree -> web, persisted --");
+  {
+    clickLayout(w2, "tree");
+    assert(w2.store["ontoloom.cmLayout"] === "tree", "choosing tree persists");
+    const treeHtml = w2.els["cm-viewport"].innerHTML;
+    assert(treeHtml.includes("cm-edge") && !treeHtml.includes("cm-w-domain"), "tree paints the tidy tree");
+    clickLayout(w2, "web");
+    assert(w2.store["ontoloom.cmLayout"] === "web", "…and back to web persists");
+    assert(w2.els["cm-viewport"].innerHTML === webHtml1, "web after round-trip === original web (byte-identical)");
+    clickLayout(w2, "tree");
+    assert(w2.els["cm-viewport"].innerHTML === treeHtml, "tree after round-trip === original tree (byte-identical)");
+  }
+
+  console.log("\n-- 6. drill-down + deps toggle in web mode (no level buttons exist) --");
+  {
+    // Drilling every domain open is the only way to see all units — click
+    // by click, exactly what a user does.
+    const domIds = [...pos.keys()].filter((id) => id !== "t0");
+    for (const id of domIds) clickNode(w1, id);
+    const posUnits = positions(w1);
+    assert(posUnits.size > pos.size, `drilling every domain shows the units (${pos.size} -> ${posUnits.size})`);
+    const seen = new Set();
+    let dup = 0;
+    for (const [, p] of posUnits) { const k = p.x + "," + p.y; if (seen.has(k)) dup++; seen.add(k); }
+    assert(dup === 0, "distinct positions hold with every domain drilled open");
+    // deps toggle off removes the solid lines
+    fire(w1.els["cm-deps"], "click", {});
+    assert(!w1.els["cm-viewport"].innerHTML.includes("cm-depweb"), "deps toggle hides DEPENDS_ON lines in web mode");
+    fire(w1.els["cm-deps"], "click", {});
+    assert(w1.els["cm-viewport"].innerHTML.includes("cm-depweb"), "deps toggle brings them back");
+    // fold everything back down
+    for (const id of domIds) clickNode(w1, id);
+    assert(positions(w1).size === pos.size, "drilled domains fold back to the domains view");
+  }
+
+  console.log("\n-- 7. domains form clusters at the files depth (opened by search) --");
+  const w3 = makeWorld({ "ontoloom.cmLayout": "web" });
+  w3.CodeMap.load(DATA.name, DATA.nodes, DATA.relationships);
+  assert(positions(w3).size === pos.size, "persisted web mode: fresh load opens straight into the web");
+  // "." matches every file (name/path carry extensions), so search opens the
+  // path to all of them — the one legitimate mass-open left. Clearing the
+  // search keeps the expansion.
+  await search(w3, ".");
+  await search(w3, "");
+  const posF = positions(w3);
+  assert(posF.size > 500, `search-opened files depth shows the bulk of the tree (${posF.size} nodes)`);
+  {
+    const treeHtml = w3.els["cm-viewport"].innerHTML;
+    const links = [];
+    const re = /<line class="cm-weblink[^"]*" x1="(-?[\d.]+)" y1="(-?[\d.]+)" x2="(-?[\d.]+)" y2="(-?[\d.]+)"/g;
+    let m;
+    while ((m = re.exec(treeHtml))) links.push(m.slice(1).map(parseFloat));
+    assert(links.length > 500, `containment links drawn at the files depth (${links.length})`);
+
+    // hub for every node: walk painted links upward from each position
+    const byPos = new Map();
+    for (const [id, p] of posF) byPos.set(p.x + "," + p.y, id);
+    const parentOf = new Map();
+    for (const [x1, y1, x2, y2] of links) {
+      const a = byPos.get(x1 + "," + y1), b = byPos.get(x2 + "," + y2);
+      if (a && b) parentOf.set(b, a);
+    }
+    function hubOf(id) {
+      let cur = id, guard = 0;
+      while (parentOf.has(cur) && parentOf.get(cur) !== "t0" && guard++ < 10) cur = parentOf.get(cur);
+      return parentOf.get(cur) === "t0" ? cur : null;
+    }
+    const hubIds = new Set();
+    for (const id of posF.keys()) { const h = hubOf(id); if (h) hubIds.add(h); }
+    let good = 0, total = 0;
+    for (const id of posF.keys()) {
+      const own = hubOf(id);
+      if (!own || own === id || id === "t0") continue;
+      const p = posF.get(id);
+      let best = null, bestD = Infinity;
+      for (const h of hubIds) {
+        const hp = posF.get(h);
+        const d = Math.hypot(p.x - hp.x, p.y - hp.y);
+        if (d < bestD) { bestD = d; best = h; }
+      }
+      total++;
+      if (best === own) good++;
+    }
+    const fracV = total ? good / total : 0;
+    assert(fracV > 0.7, `domain clustering: ${(fracV * 100).toFixed(1)}% of members sit nearest their own domain hub (${good}/${total})`);
+  }
+
+  console.log("\n-- 8. full scale via cumulative searches: distinct + faded-label guarantee --");
+  {
+    const t0 = Date.now();
+    for (const q of ["e", "a", "o", "i"]) await search(w3, q); // symbols matching open their files
+    await search(w3, "");
+    const dtBig = Date.now() - t0;
+    const posAll = positions(w3);
+    const seen = new Set();
+    let dup = 0;
+    for (const [, p] of posAll) { const k = p.x + "," + p.y; if (seen.has(k)) dup++; seen.add(k); }
+    assert(posAll.size > 3000, `cumulative searches opened the bulk of the graph (${posAll.size} nodes)`);
+    assert(dup === 0, "distinct positions hold at full scale");
+    const boxes = visibleLabelBoxes(w3);
+    const bad = labelOverlapPairs(boxes);
+    assert(bad === 0, `no two VISIBLE labels overlap at full scale (${boxes.length} visible of ${posAll.size}; priority fade covers the rest)`);
+    assert(dtBig < 60000, `full-scale sims + paints completed in ${dtBig}ms`);
+    console.log(`     (full-scale: ${dtBig}ms, ${posAll.size} nodes, ${boxes.length} visible labels)`);
+  }
+
+  console.log("\n-- 9. search in web mode --");
+  await search(w1, "RedisBasketRepository");
+  {
+    const html = w1.els["cm-viewport"].innerHTML;
+    assert(html.includes("match"), "search marks matches in web mode");
+    assert(html.includes("dim"), "search dims non-matches in web mode");
+    assert(html.includes("RedisBasketRepository"), "search auto-expanded the path to the match");
+  }
 
   console.log(failures ? `\n${failures} FAILURES` : "\nALL ASSERTIONS PASSED");
   process.exit(failures ? 1 : 0);
+})().catch((e) => {
+  console.error(e);
+  process.exit(1);
 });

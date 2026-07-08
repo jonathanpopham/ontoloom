@@ -951,6 +951,21 @@ body.codemap-mode #btn-clear { display: none; }
 #cm-svg[data-z] .cm-node.dragging text.lbl {
   opacity: 1;
 }
+
+/* Priority label fade (H10): when two label boxes would still overlap after
+   the label-aware separation pass (dense slices, pinned-pinned pairs, or
+   past the rect-pass node budget), the higher-value node keeps its label
+   and the other carries .lblfade — its dot stays, its text yields. Hover,
+   keyboard focus, selection, a search match, or the node in hand always
+   bring the faded label back, so nothing is unreachable. */
+#cm-svg .cm-node.lblfade text.lbl { opacity: 0; }
+#cm-svg .cm-node.lblfade:hover text.lbl,
+#cm-svg .cm-node.lblfade:focus-visible text.lbl,
+#cm-svg .cm-node.lblfade.selected text.lbl,
+#cm-svg .cm-node.lblfade.match text.lbl,
+#cm-svg .cm-node.lblfade.dragging text.lbl {
+  opacity: 1;
+}
 /* Mid-drag feedback: hover styling doesn't follow a captured pointer, so
    the node in hand carries .dragging for the duration — same emphasis as
    hover (accent label, firmer dot stroke), full opacity even when a search

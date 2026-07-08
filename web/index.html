@@ -100,17 +100,14 @@
     <div class="cm-stage">
       <div class="cm-bar">
         <div id="cm-stats" class="cm-stats"></div>
+        <!-- Web first: it is the default face of the map. Drill-down (click
+             a node to open it, click again to fold) is the ONLY navigation —
+             there is deliberately no bulk expand-to-level control. -->
         <div id="cm-layout" class="cm-levels cm-layout" role="group" aria-label="Layout">
-          <button data-m="tree" aria-pressed="true"
-                  title="Tidy tree — indented drill-down by containment">Tree</button>
-          <button data-m="web" aria-pressed="false"
+          <button data-m="web" aria-pressed="true"
                   title="Web — force-directed graph; domains cluster, dependencies read as lines. Drag a node to pin it — P toggles a pin, arrow keys nudge">Web</button>
-        </div>
-        <div id="cm-levels" class="cm-levels" role="group" aria-label="Expand to level">
-          <button data-d="1" aria-pressed="true">Domains</button>
-          <button data-d="2" aria-pressed="false">Units</button>
-          <button data-d="3" aria-pressed="false">Files</button>
-          <button data-d="4" aria-pressed="false">Symbols</button>
+          <button data-m="tree" aria-pressed="false"
+                  title="Tidy tree — indented drill-down by containment">Tree</button>
         </div>
         <div class="cm-search-wrap">
           <input id="cm-search" type="search" placeholder="find symbol / file…"

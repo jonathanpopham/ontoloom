@@ -100,15 +100,34 @@
     <div class="cm-stage">
       <div class="cm-bar">
         <div id="cm-stats" class="cm-stats"></div>
-        <!-- Web first: it is the default face of the map. Drill-down (click
+        <!-- Three faces. Dense graphs open as the MATRIX (an N×N grid can
+             never overlap); smaller ones open as the web. Drill-down (click
              a node to open it, click again to fold) is the ONLY navigation —
              there is deliberately no bulk expand-to-level control. -->
         <div id="cm-layout" class="cm-levels cm-layout" role="group" aria-label="Layout">
+          <button data-m="matrix" aria-pressed="false"
+                  title="Matrix — N×N dependency grid; rows depend on columns, cells count references. Nothing can overlap. The default for dense graphs">Matrix</button>
           <button data-m="web" aria-pressed="true"
                   title="Web — force-directed graph; domains cluster, dependencies read as lines. Drag a node to pin it — P toggles a pin, arrow keys nudge">Web</button>
           <button data-m="tree" aria-pressed="false"
                   title="Tidy tree — indented drill-down by containment">Tree</button>
         </div>
+        <!-- Ontology lens: which relationship family drives the view. -->
+        <div id="cm-lens" class="cm-levels cm-lens" role="group" aria-label="Ontology lens">
+          <button data-l="containment" aria-pressed="false"
+                  title="Containment — structure only; dependency arcs hidden">Contain</button>
+          <button data-l="coupling" aria-pressed="true"
+                  title="Coupling — DEPENDS_ON edges drive the view">Coupling</button>
+          <button data-l="layers" aria-pressed="false"
+                  title="Layer flow — dependencies colored by architectural layer; red points outward (Domain leaning on Application/Presentation = violation)">Layers</button>
+        </div>
+        <!-- Physics spread (web mode only): deterministic per setting. -->
+        <label id="cm-phys-wrap" class="cm-phys"
+               title="Spread — repulsion strength of the web layout. Every setting is deterministic; 1× is the seeded default">
+          <span class="cm-phys-lbl" aria-hidden="true">spread</span>
+          <input id="cm-phys" type="range" min="0.4" max="2.6" step="0.2" value="1"
+                 aria-label="Web layout spread" />
+        </label>
         <div class="cm-search-wrap">
           <input id="cm-search" type="search" placeholder="find symbol / file…"
                  autocomplete="off" aria-label="Search the code map"
@@ -116,14 +135,15 @@
           <span id="cm-match-count" class="cm-match-count" aria-live="polite" hidden></span>
         </div>
         <button id="cm-fit" class="tool" title="Recenter and zoom the map to fit everything shown">Fit</button>
-        <button id="cm-deps" class="tool" aria-pressed="true"
-                title="Show/hide cross-domain and cross-unit dependencies (DEPENDS_ON)"><span aria-hidden="true">⇄</span> deps</button>
         <button id="cm-help" class="tool" aria-label="Replay the code-map tour"
                 title="What am I looking at? Replay the code-map tour">?</button>
         <span id="cm-visible" class="cm-visible" aria-live="polite"></span>
       </div>
       <div id="cm-wrap" class="cm-wrap">
         <svg id="cm-svg"><g id="cm-viewport"></g></svg>
+        <!-- Matrix face: an HTML grid overlay — sticky headers, zero overlap
+             by construction. Hidden unless the Matrix layout is active. -->
+        <div id="cm-matrix" class="cm-matrix hidden" aria-label="Dependency matrix"></div>
         <div class="cm-legend">
           <h4>Levels &amp; kinds</h4>
           <div class="row">

@@ -159,12 +159,14 @@ function labelOverlapPairs(boxes) {
 
 /* ==================================================================== */
 (async () => {
-  console.log("\n-- 1. web is the DEFAULT: fresh load paints the web, distinct positions --");
-  const w1 = makeWorld();
+  console.log("\n-- 1. web face: distinct positions for every visible node --");
+  // Seeded web preference: dense graphs like eShop default to the MATRIX
+  // face since H11 (covered by webmap-h11-harness.js) — this harness
+  // audits the web sim itself.
+  const w1 = makeWorld({ "ontoloom.cmLayout": "web" });
   w1.CodeMap.load(DATA.name, DATA.nodes, DATA.relationships);
   const webHtml1 = w1.els["cm-viewport"].innerHTML;
-  assert(webHtml1.includes("cm-w-domain"), "fresh load (no stored preference) opens in WEB mode");
-  assert(!("ontoloom.cmLayout" in w1.store), "…without writing a preference the user never chose");
+  assert(webHtml1.includes("cm-w-domain"), "stored web preference opens in WEB mode");
   let pos = positions(w1);
   assert(pos.size === shownCount(w1), `every shown node painted (${pos.size} of ${shownCount(w1)})`);
   {
@@ -182,7 +184,7 @@ function labelOverlapPairs(boxes) {
   assert(webHtml1.includes("cm-weblink"), "containment drawn as faint links");
 
   console.log("\n-- 2. determinism: independent run, identical picture --");
-  const w2 = makeWorld();
+  const w2 = makeWorld({ "ontoloom.cmLayout": "web" });
   w2.CodeMap.load(DATA.name, DATA.nodes, DATA.relationships);
   assert(w2.els["cm-viewport"].innerHTML === webHtml1, "two fresh runs paint byte-identical web SVG");
 
@@ -234,7 +236,7 @@ function labelOverlapPairs(boxes) {
     assert(w2.els["cm-viewport"].innerHTML === treeHtml, "tree after round-trip === original tree (byte-identical)");
   }
 
-  console.log("\n-- 6. drill-down + deps toggle in web mode (no level buttons exist) --");
+  console.log("\n-- 6. drill-down + containment/coupling lens in web mode (no level buttons exist) --");
   {
     // Drilling every domain open is the only way to see all units — click
     // by click, exactly what a user does.
@@ -246,11 +248,13 @@ function labelOverlapPairs(boxes) {
     let dup = 0;
     for (const [, p] of posUnits) { const k = p.x + "," + p.y; if (seen.has(k)) dup++; seen.add(k); }
     assert(dup === 0, "distinct positions hold with every domain drilled open");
-    // deps toggle off removes the solid lines
-    fire(w1.els["cm-deps"], "click", {});
-    assert(!w1.els["cm-viewport"].innerHTML.includes("cm-depweb"), "deps toggle hides DEPENDS_ON lines in web mode");
-    fire(w1.els["cm-deps"], "click", {});
-    assert(w1.els["cm-viewport"].innerHTML.includes("cm-depweb"), "deps toggle brings them back");
+    // the containment lens hides the coupling arcs; coupling restores them
+    const clickLens = (l) =>
+      fire(w1.els["cm-lens"], "click", { target: { closest: () => ({ dataset: { l } }) } });
+    clickLens("containment");
+    assert(!w1.els["cm-viewport"].innerHTML.includes("cm-depweb"), "containment lens hides DEPENDS_ON lines in web mode");
+    clickLens("coupling");
+    assert(w1.els["cm-viewport"].innerHTML.includes("cm-depweb"), "coupling lens brings them back");
     // fold everything back down
     for (const id of domIds) clickNode(w1, id);
     assert(positions(w1).size === pos.size, "drilled domains fold back to the domains view");

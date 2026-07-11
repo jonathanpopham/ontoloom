@@ -18,9 +18,14 @@
  * There is no bulk expand-to-level — a whole repo unfolded to files or
  * symbols is unreadable, so the map never offers it.
  *
- * The force-directed WEB layout is the default face of the map; the tidy
- * TREE is the alternate, one toggle away. The choice persists per browser
- * (localStorage) once the user flips it.
+ * Three faces (H11): the force-directed WEB, the tidy TREE, and the
+ * MATRIX — an N×N dependency grid that cannot overlap by construction.
+ * Dense graphs (a dozen-plus coupled domains) open in the matrix; smaller
+ * ones open in the web. An explicit toggle persists per browser
+ * (localStorage) and always wins. An ontology LENS picks the relationship
+ * family that drives every face — containment only, DEPENDS_ON coupling,
+ * or layer flow (outward-pointing dependencies flag red) — and a spread
+ * slider scales the web sim's physics deterministically.
  *
  * Vanilla JS, no dependencies, airgap-safe — same rules as the rest of the
  * Ontoloom front-end. This file only reads the graph; it never mutates the
@@ -82,19 +87,42 @@
   let deps = {};        // wire node id -> [{id, count}] from DEPENDS_ON
   let matchSet = null;  // search results (tree nodes), null = no active search
   let selectedId = null;
-  let showDeps = true;  // draw DEPENDS_ON arcs between visible nodes
+  /* Ontology lens — which relationship family drives the view (H11):
+   *   containment — structure only; DEPENDS_ON arcs are hidden
+   *   coupling    — DEPENDS_ON arcs drawn/tabulated (the old default)
+   *   layers      — DEPENDS_ON colored by architectural layer; an edge
+   *                 whose source layer is DEEPER than its target's
+   *                 (Domain → Application, Application → Presentation …)
+   *                 points OUTWARD and is flagged red as a violation.
+   * Live view state, deliberately not persisted. */
+  let lens = "coupling";
   let T = { x: 60, y: 40, k: 1 }; // pan/zoom transform
   let prevShown = new Set(); // tree ids drawn in the previous frame → "fresh" fade-in
 
   /* ---- Web (force-directed) layout state ---- */
   const LAYOUT_KEY = "ontoloom.cmLayout";
-  // WEB is the default face of the code map; TREE is the alternate. An
-  // explicit toggle persists per browser and wins on every later load.
-  let layoutMode = "web"; // "tree" | "web"
+  // Three faces of the map (H11): WEB (force-directed), TREE (tidy
+  // drill-down), MATRIX (N×N dependency grid — zero overlap by
+  // construction). An explicit toggle persists per browser and wins on
+  // every later load; with no stored choice, load() picks MATRIX for
+  // dense graphs (many coupled domains render as a hairball in any
+  // force layout) and WEB otherwise.
+  let layoutMode = "web"; // "tree" | "web" | "matrix"
+  let layoutChosen = false; // a persisted/explicit choice beats the density default
   try {
     const v = localStorage.getItem(LAYOUT_KEY);
-    if (v === "tree" || v === "web") layoutMode = v;
+    if (v === "tree" || v === "web" || v === "matrix") {
+      layoutMode = v;
+      layoutChosen = true;
+    }
   } catch (_) {}
+  /* Physics/spread control (H11, web mode): one deterministic knob the
+   * user can turn to loosen a dense cluster. It scales the repulsion
+   * gain quadratically and every rest length linearly, then RESEEDS the
+   * layout — so the picture is a pure function of (visible slice, spread,
+   * pins): the default of 1 always reproduces the seeded H9/H10 layout,
+   * and any setting is exactly repeatable. Live state, not persisted. */
+  let physScale = 1;
   let webPos = new Map(); // tree id -> {x, y} settled force-sim position
   let webSig = "";        // signature of the visible set the sim last ran for
   let webAnim = 0;        // settle-animation token; bump to cancel a running one
@@ -490,9 +518,16 @@
   }
 
   // Seed any node that has never been placed. Returns how many were new.
+  //
+  // Deep nodes (units/files/symbols) seed as a RADIAL ORBIT per parent
+  // (H11): a drilled node's fresh children ring it at even angles on a
+  // circle sized to hold them all, instead of scattering into the global
+  // force soup. The local cluster is clean before the sim even runs, and
+  // the incremental re-settle only relaxes it — drill never knots.
   function seedWeb(shown, edges) {
     const parentOf = new Map();
     for (const [p, c] of edges) parentOf.set(c.id, p);
+    const batches = new Map(); // parent tree id -> [fresh child nodes], shown order
     let fresh = 0;
     for (const n of shown) {
       if (webPos.has(n.id)) continue;
@@ -509,15 +544,31 @@
       if (n.depth === 0) {
         webPos.set(n.id, { x: 0, y: 0 }); // root is pinned at the origin
       } else if (n.depth === 1) {
-        const rad = 320 + ((h >>> 12) % 120); // domains ring the root
+        const rad = (320 + ((h >>> 12) % 120)) * physScale; // domains ring the root
         webPos.set(n.id, { x: Math.cos(ang) * rad, y: Math.sin(ang) * rad });
       } else {
-        // Children spawn in a small deterministic scatter beside their
-        // parent — an expand grows the web outward from where you clicked.
+        // Deep node: defer to its parent's batch so siblings can share
+        // one evenly spaced ring around the parent.
         const par = parentOf.get(n.id);
-        const p = (par && webPos.get(par.id)) || { x: 0, y: 0 };
-        const rad = 18 + ((h >>> 12) % 30);
-        webPos.set(n.id, { x: p.x + Math.cos(ang) * rad, y: p.y + Math.sin(ang) * rad });
+        const key = par ? par.id : "";
+        const b = batches.get(key);
+        if (b) b.push(n);
+        else batches.set(key, [n]);
+      }
+    }
+    // Place each batch. Map iteration is insertion order and parents
+    // appear in `shown` before their children, so a parent that is itself
+    // fresh already has its position by the time its batch is placed.
+    for (const [pid, kids] of batches) {
+      const p = webPos.get(pid) || { x: 0, y: 0 };
+      const d = Math.min(kids[0].depth, WEB.rest.length - 1);
+      const base = (hash32(pid) % 3600) * (Math.PI / 1800); // deterministic ring phase
+      // Ring radius: the containment rest length, grown until every child
+      // gets ~26px of arc — big families get a wider, still-clean orbit.
+      const rad = Math.max(WEB.rest[d] * physScale, (kids.length * 26) / (2 * Math.PI));
+      for (let i = 0; i < kids.length; i++) {
+        const a = base + (i * 2 * Math.PI) / kids.length;
+        webPos.set(kids[i].id, { x: p.x + Math.cos(a) * rad, y: p.y + Math.sin(a) * rad });
       }
     }
     return fresh;
@@ -529,7 +580,7 @@
     const springs = [];
     for (const [p, c] of edges) {
       const d = Math.min(c.depth, WEB.rest.length - 1);
-      springs.push({ a: idx.get(p.id), b: idx.get(c.id), len: WEB.rest[d], k: WEB.kc[d] });
+      springs.push({ a: idx.get(p.id), b: idx.get(c.id), len: WEB.rest[d] * physScale, k: WEB.kc[d] });
     }
     // DEPENDS_ON among visible wire-mapped nodes — same visibility rule as
     // the renderer, so what pulls is exactly what gets drawn.
@@ -544,7 +595,7 @@
         const b = wireToTree[d.id];
         if (!b || a === b) continue;
         const k = WEB.depK * (1 + Math.log(1 + (Number(d.count) || 1)));
-        springs.push({ a: idx.get(a.id), b: idx.get(b.id), len: WEB.depRest, k });
+        springs.push({ a: idx.get(a.id), b: idx.get(b.id), len: WEB.depRest * physScale, k });
       }
     }
     return springs;
@@ -589,7 +640,9 @@
               d2 = dx * dx + dy * dy;
             }
             const inv = 1 / d2;
-            let f = WEB.repK * qv[i] * qv[j] * inv;
+            // physScale² so the spring/repulsion equilibrium distance
+            // scales ~linearly with the spread knob.
+            let f = WEB.repK * physScale * physScale * qv[i] * qv[j] * inv;
             if (f > WEB.fmax) f = WEB.fmax;
             const d = Math.sqrt(d2);
             const ux = dx / d, uy = dy / d;
@@ -684,7 +737,13 @@
               }
               const d = Math.sqrt(d2);
               const ux = dx / d, uy = dy / d;
-              const push = minSep - d;
+              // Push a quarter-pixel PAST touching: pairs resolved exactly
+              // onto the boundary kept getting re-flagged by float residue
+              // and neighbor cascades never damped — at 670 nodes the
+              // 96-pass budget ran out with 29 sub-0.01px "violations"
+              // still oscillating. The slack makes cascades converge
+              // (measured: 0 residuals at every drill depth).
+              const push = minSep - d + 0.25;
               if (pinned[i]) {
                 px[j] += ux * push; py[j] += uy * push;
               } else if (pinned[j]) {
@@ -877,7 +936,9 @@
     const n = shown.length;
     const fresh = seedWeb(shown, edges);
     const springs = buildSprings(shown, edges);
-    const cutoff = n > WEB.bigN ? WEB.cutoffBig : WEB.cutoff;
+    // The repulsion radius grows with the spread knob so a loosened
+    // layout keeps pushing until the new equilibrium, never past 1× tight.
+    const cutoff = (n > WEB.bigN ? WEB.cutoffBig : WEB.cutoff) * Math.max(1, physScale);
     const ticks =
       fresh > n * 0.4
         ? (n > WEB.bigN ? WEB.ticksBig : WEB.ticksFull)
@@ -979,6 +1040,20 @@
     }
   }
 
+  /* ---- Ontology lens helpers (H11) ----
+   * Layer flow: dependencies should point INWARD, toward the Domain core
+   * (Presentation → Infrastructure → Application → Domain). An edge whose
+   * source layer is deeper than its target's points OUTWARD — the
+   * architecture smell the layers lens exists to expose. Layers live on
+   * the wire nodes' `layer` property (TrailTracker stamps units/files);
+   * unranked or missing layers never flag. */
+  const LAYER_RANK = { Domain: 0, Application: 1, Infrastructure: 2, Presentation: 3 };
+  function depViolates(aReal, bReal) {
+    const la = LAYER_RANK[prop(aReal, "layer")];
+    const lb = LAYER_RANK[prop(bReal, "layer")];
+    return la !== undefined && lb !== undefined && la < lb;
+  }
+
   function nodeColor(n) {
     if (n.type === "root") return "var(--accent)";
     if (n.type === "domain") return n.color;
@@ -1014,7 +1089,7 @@
       const fresh = prevShown.size && !prevShown.has(c.id) ? " fresh" : "";
       s += `<line class="cm-weblink${fresh}" x1="${r2(p.x)}" y1="${r2(p.y)}" x2="${r2(c.x)}" y2="${r2(c.y)}"/>`;
     }
-    if (showDeps) {
+    if (lens !== "containment") {
       const wireToTree = {};
       for (const n of shown) {
         if (n.real && !(n.real.id in wireToTree)) wireToTree[n.real.id] = n;
@@ -1029,14 +1104,16 @@
           const len = Math.sqrt(dx * dx + dy * dy) || 1;
           const ux = dx / len, uy = dy / len;
           const w = Math.min(3, 1 + Math.log(1 + (Number(d.count) || 1)) * 0.35);
+          // Layers lens: an outward-pointing dependency paints red.
+          const viol = lens === "layers" && depViolates(a.real, b.real) ? " viol" : "";
           // Count label sits at the midpoint, nudged off the line.
           const mx = (a.x + b.x) / 2 - uy * 8;
           const my = (a.y + b.y) / 2 + ux * 8;
           s +=
-            `<line class="cm-depweb" x1="${r2(a.x)}" y1="${r2(a.y)}" x2="${r2(b.x)}" y2="${r2(b.y)}" stroke-width="${r2(w)}"/>` +
-            `<circle class="cm-dep-tip" cx="${r2(b.x - ux * 12)}" cy="${r2(b.y - uy * 12)}" r="2"/>` +
+            `<line class="cm-depweb${viol}" x1="${r2(a.x)}" y1="${r2(a.y)}" x2="${r2(b.x)}" y2="${r2(b.y)}" stroke-width="${r2(w)}"/>` +
+            `<circle class="cm-dep-tip${viol}" cx="${r2(b.x - ux * 12)}" cy="${r2(b.y - uy * 12)}" r="2"/>` +
             (d.count
-              ? `<text class="cm-dep-count" x="${r2(mx)}" y="${r2(my + 3)}">${esc(String(d.count))}</text>`
+              ? `<text class="cm-dep-count${viol}" x="${r2(mx)}" y="${r2(my + 3)}">${esc(String(d.count))}</text>`
               : "");
         }
       }
@@ -1118,8 +1195,164 @@
     drawWeb(shown, edges);
   }
 
+  /* ====================================================================
+   * Matrix layout (H11) — the readable answer to the hairball.
+   *
+   * An N×N grid: rows depend on columns, cells colored by coupling count.
+   * Nothing is force-placed, so nothing can ever stack or overlap — the
+   * matrix is overlap-free BY CONSTRUCTION, which is why load() picks it
+   * as the default face of dense graphs. Rendered as an HTML table
+   * overlay (#cm-matrix) so column headers can be sticky and vertical;
+   * the SVG stage underneath is simply not painted in this mode.
+   *
+   * The ontology lens picks the cross-tabulation:
+   *   coupling    — domain × domain, DEPENDS_ON counts (heat = count)
+   *   containment — same grid, presence-only (the SHAPE of coupling)
+   *   layers      — layer × layer, aggregated from every DEPENDS_ON whose
+   *                 endpoints carry a `layer`; outward cells paint red
+   * ================================================================== */
+  const matrixEl = document.getElementById("cm-matrix");
+
+  function domainMatrixModel() {
+    // Entities: the tree's domain row (business first, infra sunk), only
+    // those with a real wire node (synthetic "(ungrouped)" has no deps).
+    const ents = root.children.filter((d) => d.real);
+    const idx = new Map();
+    ents.forEach((d, i) => idx.set(d.real.id, i));
+    const m = ents.map(() => new Array(ents.length).fill(0));
+    let max = 0, edges = 0;
+    for (const fromWire in deps) {
+      const i = idx.get(fromWire);
+      if (i === undefined) continue;
+      for (const d of deps[fromWire]) {
+        const j = idx.get(d.id);
+        if (j === undefined || j === i) continue;
+        m[i][j] += Number(d.count) || 1;
+        edges++;
+        if (m[i][j] > max) max = m[i][j];
+      }
+    }
+    return {
+      kind: "domain",
+      labels: ents.map((d) => d.name),
+      treeIds: ents.map((d) => d.id),
+      colors: ents.map((d) => d.color),
+      m, max, edges,
+      what: "domains",
+    };
+  }
+
+  function layerMatrixModel() {
+    // Entities: every layer seen on a wire node, canonical ranks first
+    // (Domain, Application, Infrastructure, Presentation), the rest
+    // alphabetical after them. Counts aggregate every DEPENDS_ON whose
+    // both endpoints carry a layer (units, in TrailTracker graphs).
+    const seen = new Set();
+    for (const id in realById) {
+      const l = prop(realById[id], "layer");
+      if (l != null && l !== "") seen.add(String(l));
+    }
+    const labels = [...seen].sort((a, b) => {
+      const ra = LAYER_RANK[a] !== undefined ? LAYER_RANK[a] : 99;
+      const rb = LAYER_RANK[b] !== undefined ? LAYER_RANK[b] : 99;
+      return ra - rb || a.localeCompare(b);
+    });
+    const idx = new Map();
+    labels.forEach((l, i) => idx.set(l, i));
+    const m = labels.map(() => new Array(labels.length).fill(0));
+    let max = 0, edges = 0;
+    for (const fromWire in deps) {
+      const la = prop(realById[fromWire], "layer");
+      const i = idx.get(la != null ? String(la) : "");
+      if (i === undefined) continue;
+      for (const d of deps[fromWire]) {
+        const lb = prop(realById[d.id], "layer");
+        const j = idx.get(lb != null ? String(lb) : "");
+        if (j === undefined || j === i) continue;
+        m[i][j] += Number(d.count) || 1;
+        edges++;
+        if (m[i][j] > max) max = m[i][j];
+      }
+    }
+    return { kind: "layer", labels, treeIds: null, colors: null, m, max, edges, what: "layers" };
+  }
+
+  // Heat ramps, matched to the app tokens (teal accent, red danger).
+  function matrixHeat(v, max) {
+    if (!v) return "";
+    const t = Math.pow(v / Math.max(1, max), 0.45);
+    return `background:rgba(62,201,183,${(0.12 + 0.68 * t).toFixed(3)})`;
+  }
+  function matrixHeatViol(v, max) {
+    const t = Math.min(1, v / Math.max(1, max));
+    return `background:rgba(224,104,95,${(0.25 + 0.55 * t).toFixed(3)})`;
+  }
+
+  function renderMatrix() {
+    if (!matrixEl) return;
+    const model = lens === "layers" ? layerMatrixModel() : domainMatrixModel();
+    const { labels, treeIds, colors, m, max } = model;
+    const n = labels.length;
+    const density = lens === "containment";
+    const layered = lens === "layers";
+    if (!n) {
+      matrixEl.innerHTML = `<div class="cm-matrix-empty">nothing to cross-tabulate${
+        layered ? " — no node carries a layer" : ""}</div>`;
+      visibleEl.textContent = "";
+      return;
+    }
+    let viol = 0;
+    let html = `<div class="cm-matrix-scroll"><table role="grid" aria-label="Dependency matrix"><thead><tr><th class="corner">${
+      layered ? "from ＼ to" : "depends on ▸"}</th>`;
+    for (let j = 0; j < n; j++) {
+      html += `<th scope="col"><span>${esc(truncate(labels[j], 22))}</span></th>`;
+    }
+    html += `</tr></thead><tbody>`;
+    for (let i = 0; i < n; i++) {
+      const swatch = colors ? `<i class="msw" style="background:${colors[i]}"></i>` : "";
+      const rowTid = treeIds ? ` data-t="${treeIds[i]}"` : "";
+      html += `<tr><th scope="row"${rowTid}>${swatch}${esc(truncate(labels[i], 22))}</th>`;
+      for (let j = 0; j < n; j++) {
+        const v = m[i][j];
+        if (i === j) {
+          html += `<td class="cell diag"></td>`;
+          continue;
+        }
+        const isViol = layered && v > 0 &&
+          LAYER_RANK[labels[i]] !== undefined && LAYER_RANK[labels[j]] !== undefined &&
+          LAYER_RANK[labels[i]] < LAYER_RANK[labels[j]];
+        if (isViol) viol++;
+        const style = v ? (isViol ? matrixHeatViol(v, max) : matrixHeat(v, max)) : "";
+        const txt = !v ? "" : density ? "●" : String(v);
+        const title = `${labels[i]} ${layered ? "depends outward on" : "depends on"} ${labels[j]} — ${v} reference${v === 1 ? "" : "s"}${isViol ? " (LAYER VIOLATION: points outward)" : ""}`;
+        html += `<td class="cell${isViol ? " viol" : ""}${density && v ? " dens" : ""}"` +
+          (style ? ` style="${style}"` : "") +
+          (v ? ` title="${esc(title)}"` : "") +
+          (treeIds ? ` data-t="${treeIds[i]}"` : "") +
+          `>${txt}</td>`;
+      }
+      html += `</tr>`;
+    }
+    html += `</tbody></table></div>`;
+    html += `<div class="cm-matrix-cap">${
+      layered
+        ? (viol
+            ? `row → column flow between layers. <b>${viol} cell${viol === 1 ? "" : "s"} point outward (red) — dependencies should flow toward Domain.</b>`
+            : "row → column flow between layers. no outward (red) dependencies — flow points inward.")
+        : density
+          ? "presence only — the shape of the coupling, no magnitudes. dense columns are shared sinks."
+          : "row depends on column, cells count references. a bright COLUMN is a dependency sink; a bright ROW leans on everything."
+    }</div>`;
+    matrixEl.innerHTML = html;
+    visibleEl.textContent = `${n}×${n} ${model.what}`;
+  }
+
   function render() {
     if (!root) return;
+    if (layoutMode === "matrix") {
+      renderMatrix();
+      return;
+    }
     if (layoutMode === "web") {
       renderWeb();
       return;
@@ -1152,7 +1385,7 @@
     // coupling the CONTAINS tree can't show (everything leaning on the event
     // bus, Ordering touching Basket, ...). Drawn as bowed dashed arcs with the
     // coupling count; nodes still paint on top.
-    if (showDeps) {
+    if (lens !== "containment") {
       const wireToTree = {};
       for (const n of shown) {
         if (n.real && !(n.real.id in wireToTree)) wireToTree[n.real.id] = n;
@@ -1163,15 +1396,16 @@
         for (const d of deps[fromWire]) {
           const b = wireToTree[d.id];
           if (!b || a === b) continue;
+          const viol = lens === "layers" && depViolates(a.real, b.real) ? " viol" : "";
           const bow = 46 + Math.abs(a.y - b.y) * 0.12;
           const cx = Math.min(a.x, b.x) - bow;
           const midX = (a.x + b.x) / 2 - bow * 0.72;
           const midY = (a.y + b.y) / 2;
           s +=
-            `<path class="cm-dep" d="M${a.x} ${a.y}C${cx} ${a.y} ${cx} ${b.y} ${b.x} ${b.y}"/>` +
-            `<circle class="cm-dep-tip" cx="${b.x - 9}" cy="${b.y}" r="2"/>` +
+            `<path class="cm-dep${viol}" d="M${a.x} ${a.y}C${cx} ${a.y} ${cx} ${b.y} ${b.x} ${b.y}"/>` +
+            `<circle class="cm-dep-tip${viol}" cx="${b.x - 9}" cy="${b.y}" r="2"/>` +
             (d.count
-              ? `<text class="cm-dep-count" x="${midX}" y="${midY + 3}">${esc(String(d.count))}</text>`
+              ? `<text class="cm-dep-count${viol}" x="${midX}" y="${midY + 3}">${esc(String(d.count))}</text>`
               : "");
         }
       }
@@ -1579,6 +1813,7 @@
 
   function fit() {
     if (!root) return;
+    if (layoutMode === "matrix") return; // a table has no camera to fit
     const shown = [];
     (function c(n) {
       shown.push(n);
@@ -1611,29 +1846,88 @@
   }
   document.getElementById("cm-fit").addEventListener("click", fit);
 
-  const depsBtn = document.getElementById("cm-deps");
-  if (depsBtn) {
-    depsBtn.addEventListener("click", () => {
-      showDeps = !showDeps;
-      depsBtn.setAttribute("aria-pressed", showDeps ? "true" : "false");
-      render();
+  /* ---- Ontology lens: containment | coupling | layers (H11) ---- */
+  function syncLensButtons() {
+    document
+      .querySelectorAll("#cm-lens button")
+      .forEach((b) => b.setAttribute("aria-pressed", b.dataset.l === lens ? "true" : "false"));
+  }
+  function setLens(l) {
+    if (l !== "containment" && l !== "coupling" && l !== "layers") return;
+    if (l === lens) { syncLensButtons(); return; }
+    lens = l;
+    syncLensButtons();
+    // A lens never moves a node — it re-dresses the same layout (or
+    // re-tabulates the matrix), so no re-sim and no fit.
+    render();
+  }
+  const lensCtl = document.getElementById("cm-lens");
+  if (lensCtl) {
+    lensCtl.addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (!b || !root) return;
+      setLens(b.dataset.l);
     });
   }
 
-  /* ---- Layout toggle: Tree (tidy drill-down) | Web (force-directed) ---- */
+  /* ---- Physics / spread control (web mode, H11) ---- */
+  const physCtl = document.getElementById("cm-phys");
+  let physT = null;
+  if (physCtl) {
+    physCtl.addEventListener("input", (e) => {
+      const v = Math.max(0.4, Math.min(2.6, parseFloat(e.target.value) || 1));
+      if (v === physScale) return;
+      physScale = v;
+      clearTimeout(physT);
+      // Debounced full reseed: the layout is a pure function of
+      // (visible slice, spread, pins) — sliding back to 1 restores the
+      // seeded deterministic picture exactly.
+      physT = setTimeout(() => {
+        if (layoutMode !== "web" || !root) return;
+        webPos = new Map();
+        webSig = "";
+        prevShown = new Set(); // a re-spread repaints everything; no fade cues
+        render();
+        fit();
+      }, 120);
+    });
+  }
+
+  /* ---- Matrix interactions: click a row/cell to inspect that domain ---- */
+  if (matrixEl) {
+    matrixEl.addEventListener("click", (e) => {
+      const t = e.target.closest ? e.target.closest("[data-t]") : null;
+      if (!t || !t.dataset) return;
+      const n = byId[t.dataset.t];
+      if (n) showDetail(n);
+    });
+  }
+
+  /* ---- Layout toggle: Matrix (grid) | Web (force) | Tree (tidy) ---- */
   function syncLayoutButtons() {
     document
       .querySelectorAll("#cm-layout button")
       .forEach((b) => b.setAttribute("aria-pressed", b.dataset.m === layoutMode ? "true" : "false"));
   }
 
+  // Swap the visible stage for the mode: the matrix overlay replaces the
+  // SVG canvas; the spread slider only makes sense over the force sim.
+  function applyModeChrome() {
+    if (matrixEl && matrixEl.classList) matrixEl.classList.toggle("hidden", layoutMode !== "matrix");
+    if (wrap.classList) wrap.classList.toggle("matrix-mode", layoutMode === "matrix");
+    const pw = document.getElementById("cm-phys-wrap");
+    if (pw && pw.classList) pw.classList.toggle("hidden", layoutMode !== "web");
+  }
+
   function setLayoutMode(m) {
-    if (m !== "tree" && m !== "web") return;
+    if (m !== "tree" && m !== "web" && m !== "matrix") return;
     if (m === layoutMode) { syncLayoutButtons(); return; }
     layoutMode = m;
+    layoutChosen = true;
     webAnim++; // cancel any settle animation from the other mode
     try { localStorage.setItem(LAYOUT_KEY, m); } catch (_) { /* private mode — just not remembered */ }
     syncLayoutButtons();
+    applyModeChrome();
     prevShown = new Set(); // a mode switch repaints everything; no fade cues
     render();
     fit();
@@ -1746,13 +2040,18 @@
         `<p><strong>Search</strong> lights up matching files and symbols and opens the path to ` +
         `them. <strong>Drag</strong> to pan, <strong>scroll</strong> to zoom, <strong>Fit</strong> to ` +
         `recenter. Replay this tour any time with the <strong>?</strong> button.</p>` +
-        `<p>The map opens as a <strong>Web</strong> — a force-directed view where domains ` +
-        `cluster and dependencies read as lines — and you can <strong>drag a node</strong> to ` +
-        `reposition it: it stays pinned where you drop it (dashed ring), and ` +
-        `<strong>double-click</strong> unpins it. Same thing from the keyboard: ` +
-        `<strong>arrow keys</strong> nudge the focused node (Shift steps bigger) and ` +
-        `<strong>P</strong> pins or unpins it. The <strong>Tree</strong> toggle switches to a ` +
-        `tidy indented layout when containment matters more than coupling.</p>`,
+        `<p>The map has three faces. Dense repos open as a <strong>Matrix</strong> — an ` +
+        `N×N grid where a row depends on a column and bright cells are heavy coupling; ` +
+        `nothing can ever overlap there. The <strong>Web</strong> is the force-directed view ` +
+        `where domains cluster and dependencies read as lines — <strong>drag a node</strong> to ` +
+        `pin it (dashed ring), <strong>double-click</strong> to unpin, <strong>arrow keys</strong> ` +
+        `nudge and <strong>P</strong> toggles a pin, and the <strong>spread</strong> slider ` +
+        `loosens a dense cluster. The <strong>Tree</strong> is a tidy indented layout for when ` +
+        `containment matters most.</p>` +
+        `<p>The <strong>lens</strong> picks which relationships drive the view: containment ` +
+        `only, dependency coupling, or <strong>layer flow</strong> — where a dependency that ` +
+        `points outward (Domain code leaning on Application or Presentation) paints ` +
+        `<strong>red</strong>.</p>`,
       target: "#cm-layout",
     },
   ];
@@ -1869,6 +2168,22 @@
   /* ====================================================================
    * Public API — app.js drives mode switching through this
    * ================================================================== */
+  // Dense graphs open as the MATRIX: past a dozen coupled domains, any
+  // force layout reads as a hairball no matter how well it separates —
+  // the grid is the view that stays legible (zero overlap by
+  // construction). A persisted/explicit layout choice always wins.
+  function denseByDefault() {
+    const doms = root.children.filter((d) => d.real);
+    if (doms.length < 12) return false;
+    const domIds = new Set(doms.map((d) => d.real.id));
+    let dd = 0;
+    for (const fromWire in deps) {
+      if (!domIds.has(fromWire)) continue;
+      for (const d of deps[fromWire]) if (domIds.has(d.id)) dd++;
+    }
+    return dd >= 12;
+  }
+
   window.CodeMap = {
     detect,
 
@@ -1877,6 +2192,7 @@
     load(name, nodes, rels) {
       buildTree(name, nodes, rels);
       collapseToDomains();
+      if (!layoutChosen) layoutMode = denseByDefault() ? "matrix" : "web";
       selectedId = null;
       matchSet = null;
       prevShown = new Set(); // fresh graph: first paint arrives without fades
@@ -1887,7 +2203,9 @@
       webEdges = null;
       pinsKey = pinsStorageKey(name, nodes, rels);
       loadPins();            // user pins for THIS graph survive reloads
-      syncLayoutButtons();   // reflect the persisted Tree|Web choice
+      syncLayoutButtons();   // reflect the chosen Matrix|Web|Tree face
+      syncLensButtons();     // …and the active ontology lens
+      applyModeChrome();     // matrix overlay vs SVG stage, spread slider
       searchInput.value = "";
       matchCountEl.hidden = true;
       detail.classList.add("empty");
@@ -1912,6 +2230,7 @@
       webEdges = null;
       webPins = new Map();
       pinsKey = "";
+      if (matrixEl) matrixEl.innerHTML = "";
       vp.innerHTML = "";
       statsEl.innerHTML = "";
       visibleEl.textContent = "";

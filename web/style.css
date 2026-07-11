@@ -981,7 +981,122 @@ body.codemap-mode #btn-clear { display: none; }
   font-family: var(--mono, ui-monospace, monospace); font-size: 9.5px;
   fill: var(--accent); opacity: 0.8; text-anchor: middle; pointer-events: none;
 }
-#cm-deps[aria-pressed="false"] { opacity: 0.55; }
+
+/* ---- Layers lens (H11): outward-pointing dependencies scream red ---- */
+.cm-dep.viol, .cm-depweb.viol { stroke: var(--danger); opacity: 0.85; }
+.cm-dep-tip.viol { fill: var(--danger); opacity: 0.9; }
+.cm-dep-count.viol { fill: var(--danger); opacity: 1; font-weight: 700; }
+
+/* ---- Physics / spread slider (H11, web mode only) ---- */
+.cm-phys {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 3px 10px;
+  min-height: 34px;
+}
+.cm-phys.hidden { display: none; }
+.cm-phys-lbl {
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: var(--text-faint);
+}
+#cm-phys { width: 90px; accent-color: var(--accent); cursor: pointer; }
+
+/* ---- Matrix face (H11): N×N dependency grid, zero overlap by
+ * construction. An HTML overlay on the SVG stage: sticky row/column
+ * headers survive scrolling, vertical column labels keep 20+ domains
+ * readable, and the heat comes inline from renderMatrix(). ---- */
+.cm-matrix {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  z-index: 2; /* over the SVG, under the tour scrim */
+}
+.cm-matrix.hidden { display: none; }
+.cm-wrap.matrix-mode { cursor: default; }
+.cm-matrix-scroll { flex: 1; overflow: auto; }
+.cm-matrix table {
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.cm-matrix th, .cm-matrix td { border: 1px solid var(--border-soft); }
+.cm-matrix thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  font-weight: 500;
+  font-size: 10.5px;
+  padding: 8px 6px;
+  height: 130px;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+.cm-matrix thead th span {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  display: inline-block;
+}
+.cm-matrix th.corner { left: 0; z-index: 3; color: var(--text-faint); }
+.cm-matrix tbody th {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg-panel);
+  color: var(--text);
+  text-align: right;
+  padding: 6px 12px;
+  white-space: nowrap;
+  font-weight: 500;
+  cursor: pointer;
+}
+.cm-matrix tbody th:hover { color: var(--accent); }
+.cm-matrix .msw {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  margin-right: 7px;
+  vertical-align: baseline;
+}
+.cm-matrix td.cell {
+  min-width: 34px;
+  height: 32px;
+  text-align: center;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+.cm-matrix td.cell[data-t] { cursor: pointer; }
+.cm-matrix td.diag { background: var(--bg-elevated); }
+.cm-matrix td.dens { color: var(--accent); }
+.cm-matrix td.viol { color: var(--text); font-weight: 700; }
+.cm-matrix-cap {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  padding: 9px 14px;
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg-panel);
+}
+.cm-matrix-cap b { color: var(--danger); }
+.cm-matrix-empty {
+  margin: auto;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
 
 /* ---- Narrow windows: keep the canvas usable, shrink the side panels ---- */
 @media (max-width: 900px) {

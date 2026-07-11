@@ -231,11 +231,13 @@ function labelOverlapPairs(boxes, margin) {
 
 /* ==================================================================== */
 (async () => {
-  console.log("\n-- 1. web default, domains view: distinct dots, no dot OR label overlap --");
-  const w1 = makeWorld();
+  console.log("\n-- 1. web face, domains view: distinct dots, no dot OR label overlap --");
+  // Seeded web preference: dense graphs default to the MATRIX face since
+  // H11 (webmap-h11-harness.js covers that) — this harness audits the sim.
+  const w1 = makeWorld({ "ontoloom.cmLayout": "web" });
   w1.CodeMap.load(DATA.name, DATA.nodes, DATA.relationships);
   const webHtml1 = w1.els["cm-viewport"].innerHTML;
-  assert(webHtml1.includes("cm-w-domain"), "fresh load opens in web mode (H10 default)");
+  assert(webHtml1.includes("cm-w-domain"), "stored web preference opens in web mode");
   let pos = nodes(w1);
   assert(pos.size === shownCount(w1), `every shown node painted (${pos.size} of ${shownCount(w1)})`);
   assert(overlapCountAll(pos) === 0, `no pair violates min dot separation at the domains view (${pos.size} nodes)`);
@@ -267,7 +269,7 @@ function labelOverlapPairs(boxes, margin) {
   assert(nodes(w1).size === pos.size, "drilled domains fold back to the domains view");
 
   console.log("\n-- 3. determinism: two fresh runs, byte-identical web SVG --");
-  const w2 = makeWorld();
+  const w2 = makeWorld({ "ontoloom.cmLayout": "web" });
   w2.CodeMap.load(DATA.name, DATA.nodes, DATA.relationships);
   assert(w2.els["cm-viewport"].innerHTML === webHtml1, "independent fresh runs paint byte-identical web SVG");
 

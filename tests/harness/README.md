@@ -6,14 +6,21 @@ directory; every one must end `ALL ASSERTIONS PASSED`.
 
 - codemap-harness.js — drill-down data handling (detect / lazy expand /
   search / detail) + the H10 drill-only contract: no bulk expand-to-level
-  buttons exist anywhere, web is the default layout
-- webmap-harness.js  — web/force layout: web-by-default, stored-preference
-  honor, determinism, toggle round-trip, search-driven deep states, and the
+  buttons exist anywhere
+- webmap-harness.js  — web/force layout: stored-preference honor,
+  determinism, toggle round-trip, search-driven deep states, and the
   full-scale visible-label no-overlap guarantee (priority fade)
 - webmap-h9-harness.js — collision (dots AND label boxes) + pin/drag: zero
   label-box overlaps at the domains view and with every domain drilled
   (was 63 pairs pre-H10), tree-mode no-touch spacing at the files depth
-- eshop-hierarchy.ontoloom.json — the real-data fixture all three use
+- webmap-h11-harness.js — the H11 surface: MATRIX is the default face of
+  dense graphs (real aggregated counts, overlap-free by construction),
+  the ontology lens (containment / coupling / layer flow with red outward
+  violations) drives matrix AND web, the physics/spread slider is live +
+  deterministic + reversible, and drilling rings children around their
+  parent with zero stacking at every depth (was 29 residual overlaps at
+  the files depth pre-H11)
+- eshop-hierarchy.ontoloom.json — the real-data fixture all four use
 
 Navigation contract (H10, Jonathan's directive): drill-down is the ONLY
 navigation — click a node to open its children, click again to fold, search

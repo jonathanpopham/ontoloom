@@ -50,6 +50,12 @@ global.localStorage = {
 };
 global.requestAnimationFrame = (fn) => fn();
 
+// This harness audits the drill-down DATA handling, so it works in the web
+// face. (Dense graphs like eShop default to the MATRIX face since H11 —
+// that path is covered by webmap-h11-harness.js.) The preference is read
+// at parse time, so it must be seeded BEFORE the eval.
+global.localStorage._s["ontoloom.cmLayout"] = "web";
+
 const src = fs.readFileSync(path.join(__dirname, "..", "..", "web", "codemap.js"), "utf8");
 eval(src);
 
@@ -77,7 +83,7 @@ const shown0 = parseInt(els["cm-visible"].textContent.replace(/,/g, ""), 10);
 assert(shown0 >= 22 && shown0 <= 25, `starts collapsed near the domain level (${shown0} shown, expected root + ~22 domains)`);
 assert(els["cm-viewport"].innerHTML.includes("cm-node"), "renders nodes into the SVG viewport");
 assert(els["cm-viewport"].innerHTML.includes("cm-w-domain"),
-  "fresh load (no stored preference) paints the WEB layout by default");
+  "stored web preference paints the WEB layout");
 assert(els["cm-stats"].innerHTML.includes("3,270") === false, "stats are per level, not total"); // sanity
 assert(els["cm-stats"].innerHTML.includes("21") && els["cm-stats"].innerHTML.includes("2,685"),
   "stats strip shows 21 domains and 2,685 symbols");

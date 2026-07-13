@@ -1,16 +1,16 @@
 # Ontoloom
 
-**A lightweight, airgapped ontology & knowledge-graph builder — for people who think in ideas, not Cypher.**
+**A lightweight, airgapped ontology & knowledge-graph builder for people who think in ideas, not Cypher.**
 
-![Ontoloom — a visual ontology built from ideas and links](docs/screenshot.png)
+![Ontoloom: a visual ontology built from ideas and links](docs/screenshot.png)
 
-Ontoloom is a single Rust binary with **zero external dependencies**. Run it and a visual graph editor opens in your browser. Draw out your ideas as nodes and links, then export them as Neo4j-ready **JSONL**, a runnable **Cypher** script, plain **JSON**, or **GraphML** — ready to load into Neo4j, Gephi, yEd, or back into Ontoloom.
+Ontoloom is a single Rust binary with **zero external dependencies**. Run it and a visual graph editor opens in your browser. Draw out your ideas as nodes and links, then export them as Neo4j-ready **JSONL**, a runnable **Cypher** script, plain **JSON**, or **GraphML**, ready to load into Neo4j, Gephi, yEd, or back into Ontoloom.
 
 It runs **entirely on your machine, on `127.0.0.1`, with no network access whatsoever.** No accounts, no cloud, no telemetry, nothing to fetch. Drop the binary on an airgapped box and it just works.
 
 ```
 ┌─────────────────────────────────────────────┐
-│  ontoloom — airgapped ontology builder        │
+│  ontoloom - airgapped ontology builder        │
 └─────────────────────────────────────────────┘
 
   Editor:    http://127.0.0.1:7878/
@@ -19,7 +19,7 @@ It runs **entirely on your machine, on `127.0.0.1`, with no network access whats
 
 ## Demo
 
-▶️ **[Watch a 3-minute walkthrough](https://github.com/jonathanpopham/ontoloom/releases/download/v0.1.0/ontoloom-demo.mp4)** — building an ontology from scratch and exporting it for Neo4j.
+▶️ **[Watch a 3-minute walkthrough](https://github.com/jonathanpopham/ontoloom/releases/download/v0.1.0/ontoloom-demo.mp4)**: building an ontology from scratch and exporting it for Neo4j.
 
 [![Watch the Ontoloom demo](docs/screenshot.png)](https://github.com/jonathanpopham/ontoloom/releases/download/v0.1.0/ontoloom-demo.mp4)
 
@@ -31,7 +31,7 @@ Knowledge graphs are a great way to organize ideas, but the tooling assumes you 
 
 Design constraints, on purpose:
 
-- **No external dependencies.** The Rust side is `std` only — its own JSON codec, its own tiny HTTP server. Auditable in an afternoon.
+- **No external dependencies.** The Rust side is `std` only: its own JSON codec, its own tiny HTTP server. Auditable in an afternoon.
 - **Airgapped.** Binds to loopback, embeds its entire UI in the binary, never opens an outbound connection.
 - **One file.** A ~450 KB binary. Copy it, run it, done.
 - **Boring formats.** It exports the formats other tools already read, instead of inventing a new one.
@@ -49,7 +49,7 @@ Grab the single file for your OS from the [**Releases**](https://github.com/jona
 | **macOS (Intel)** | `…-x86_64-apple-darwin.tar.gz` | Unpack, then `./ontoloom` |
 | **Linux (any distro)** | `…-x86_64-unknown-linux-musl.tar.gz` | Unpack, `chmod +x ontoloom`, `./ontoloom` |
 
-It's a single self-contained file — nothing to install. It opens your browser to the editor and runs entirely offline.
+It's a single self-contained file; there is nothing to install. It opens your browser to the editor and runs entirely offline.
 
 > **First-run security prompt:** because these binaries aren't code-signed, your OS may warn you the first time.
 > - **macOS:** right-click the binary → **Open** (instead of double-clicking), or run `xattr -d com.apple.quarantine ./ontoloom` once.
@@ -70,13 +70,13 @@ cargo build --release
 
 Your browser opens to the editor automatically. That's it.
 
-## Quick tutorial — your first ontology in 2 minutes
+## Quick tutorial: your first ontology in 2 minutes
 
 Let's model a tiny knowledge graph: **an author who wrote a book, published by a publisher.** Start Ontoloom (`./ontoloom`) and follow along in the browser tab that opens.
 
 1. **Name it.** Click the title at the top left (it says *Untitled ontology*) and type `Library`. This name becomes your export file name later.
 
-2. **Add the first idea.** Double-click anywhere on the dotted canvas. A circle appears and the panel on the right opens. In **Name**, type `Jane Austen`. In **Types / labels**, type `Author`. (Labels are how you group ideas — they become Neo4j labels on export.)
+2. **Add the first idea.** Double-click anywhere on the dotted canvas. A circle appears and the panel on the right opens. In **Name**, type `Jane Austen`. In **Types / labels**, type `Author`. (Labels are how you group ideas; they become Neo4j labels on export.)
 
 3. **Add two more.** Double-click two more empty spots and make:
    - `Pride and Prejudice` with label `Book`
@@ -86,7 +86,7 @@ Let's model a tiny knowledge graph: **an author who wrote a book, published by a
 
 4. **Give one some detail.** Click the `Pride and Prejudice` circle, hit **+ Add property**, and add `year` → `1813`. Properties are the facts attached to an idea. (Type a number and it stays a number; type text and it stays text.)
 
-5. **Connect them.** Click **⤳ Connect** in the toolbar (the canvas cursor turns to a crosshair). Click `Jane Austen`, then click `Pride and Prejudice` — a link is drawn. Click the new link's label, and set its **relationship type** to `WROTE`. Then connect `T. Egerton` → `Pride and Prejudice` and type `PUBLISHED`. Press <kbd>Esc</kbd> to leave Connect mode.
+5. **Connect them.** Click **⤳ Connect** in the toolbar (the canvas cursor turns to a crosshair). Click `Jane Austen`, then click `Pride and Prejudice`, and a link is drawn. Click the new link's label, and set its **relationship type** to `WROTE`. Then connect `T. Egerton` → `Pride and Prejudice` and type `PUBLISHED`. Press <kbd>Esc</kbd> to leave Connect mode.
 
 6. **Tidy up.** Drag the circles around to arrange them. Scroll to zoom, drag the background to pan. Everything **autosaves** as you go.
 
@@ -95,9 +95,9 @@ Let's model a tiny knowledge graph: **an author who wrote a book, published by a
    - **Ontoloom JSON** to keep an editable copy (layout included)
    - **GraphML** for Gephi / yEd
 
-   The file downloads as `Library.jsonl` (or `.cypher`, etc.) — named from your title.
+   The file downloads as `Library.jsonl` (or `.cypher`, etc.), named from your title.
 
-8. **Bring it back.** Click **📂 Import** and pick any file you just exported. It loads back into an editable graph — names, labels, relationship types, and properties intact. Anything Ontoloom exports, it can re-import.
+8. **Bring it back.** Click **📂 Import** and pick any file you just exported. It loads back into an editable graph with names, labels, relationship types, and properties intact. Anything Ontoloom exports, it can re-import.
 
 That's the whole loop: **draw → export → hand to Neo4j (or re-import).** No query language required.
 
@@ -122,14 +122,14 @@ OPTIONS:
 |-------------------|-----------------------------------------------------------|
 | **Add an idea**   | Double-click empty canvas (or the **＋ Add idea** button)  |
 | **Name / type it**| Click it, edit in the panel. "Types" become Neo4j labels. |
-| **Add properties**| Click it, **+ Add property** — key/value pairs            |
+| **Add properties**| Click it, **+ Add property** (key/value pairs)            |
 | **Move**          | Drag it                                                    |
 | **Connect**       | Click **⤳ Connect**, then click a source idea and a target |
 | **Edit a link**   | Click the link's label, set its relationship type         |
 | **Delete**        | Select, then press <kbd>Delete</kbd>                       |
 | **Pan / zoom**    | Drag the background / scroll wheel                         |
 
-Your work **autosaves** to disk and to the browser's local storage as you go, so a refresh — or a crash — never loses it.
+Your work **autosaves** to disk and to the browser's local storage as you go, so a refresh (or a crash) never loses it.
 
 ## Export formats
 
@@ -167,7 +167,7 @@ A node-link document that round-trips back into Ontoloom via **📂 Import** (it
 ### 4. GraphML (`.graphml`)
 Standard graph XML for **Gephi**, **yEd**, and `apoc.import.graphml`.
 
-## Import — anything it exports, it reads back
+## Import: anything it exports, it reads back
 
 Click **📂 Import** and pick a file. Ontoloom auto-detects the format from the
 file name and contents, so **every format above round-trips**: JSON, JSONL,
@@ -176,7 +176,7 @@ relationship types, and typed properties are preserved. Imports that carry no
 layout (JSONL / Cypher / GraphML) are auto-arranged on a grid.
 
 > The Cypher reader targets the `CREATE` shape Ontoloom emits and common simple
-> variants — it is not a full Cypher query parser. JSON, JSONL, and GraphML
+> variants; it is not a full Cypher query parser. JSON, JSONL, and GraphML
 > imports are general.
 
 ## How it stays dependency-free

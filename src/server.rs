@@ -263,8 +263,8 @@ fn handle_import(req: &Request) -> Response {
     }
 }
 
-/// `POST /api/analyze` with `{"path": "/path/to/repo"}` — run the local
-/// TrailTracker binary against a repository and return the resulting
+/// `POST /api/analyze` with `{"path": "/path/to/repo"}` — run the locally
+/// configured analyzer binary against a repository and return the resulting
 /// hierarchy graph as Ontoloom wire JSON. Everything stays on this machine:
 /// the analyzer is a local executable and its output never leaves loopback,
 /// so the airgap guarantee holds.
@@ -306,13 +306,13 @@ fn handle_analyze(req: &Request) -> Response {
         }
     }
 
-    let bin = match trailtracker_bin() {
+    let bin = match analyzer_bin() {
         Some(b) => b,
         None => {
             return Response::text(
                 "500 Internal Server Error",
-                "TrailTracker binary not found — set the TRAILTRACKER_BIN environment \
-                 variable, or build it: cd ~/geist/trailtracker && cargo build --release",
+                "code map analyzer not configured: set ONTOLOOM_ANALYZER_BIN to a \
+                 compatible analyzer binary",
             )
         }
     };
@@ -333,7 +333,7 @@ fn handle_analyze(req: &Request) -> Response {
     };
 
     if !output.status.success() {
-        // TrailTracker prints a human-readable diagnostic (plus a `fix:` hint)
+        // The analyzer prints a human-readable diagnostic (plus a `fix:` hint)
         // to stderr; pass that straight through to the UI.
         let stderr = String::from_utf8_lossy(&output.stderr);
         let msg = stderr.trim();
@@ -364,17 +364,13 @@ fn handle_analyze(req: &Request) -> Response {
     }
 }
 
-/// Locate the TrailTracker executable: the `TRAILTRACKER_BIN` env var wins
-/// (and, when set, is authoritative — a wrong value is reported rather than
-/// silently falling back), else the conventional release-build path under the
-/// user's home directory.
-fn trailtracker_bin() -> Option<PathBuf> {
-    if let Ok(configured) = std::env::var("TRAILTRACKER_BIN") {
-        let p = expand_tilde(configured.trim());
-        return if p.is_file() { Some(p) } else { None };
-    }
-    let home = std::env::var("HOME").ok()?;
-    let p = PathBuf::from(home).join("geist/trailtracker/target/release/trailtracker");
+/// Locate the code map analyzer executable via the `ONTOLOOM_ANALYZER_BIN`
+/// environment variable. There is no fallback path: when the variable is
+/// unset, or points at a file that does not exist, the analyze feature is
+/// simply unavailable.
+fn analyzer_bin() -> Option<PathBuf> {
+    let configured = std::env::var("ONTOLOOM_ANALYZER_BIN").ok()?;
+    let p = expand_tilde(configured.trim());
     if p.is_file() {
         Some(p)
     } else {
@@ -532,18 +528,18 @@ mod tests {
         assert_eq!(expand_tilde("~other/x"), PathBuf::from("~other/x"));
     }
 
-    /// End-to-end through the real TrailTracker binary, when present. On
-    /// machines without the binary (or the eval corpus) this quietly skips —
-    /// CI stays green either way.
+    /// End-to-end through a real analyzer binary, when one is configured via
+    /// `ONTOLOOM_ANALYZER_BIN`. On machines without a configured analyzer
+    /// this quietly skips — CI stays green either way.
     #[test]
-    fn analyze_runs_trailtracker_on_calc_corpus_when_available() {
-        let Some(bin) = trailtracker_bin() else {
-            eprintln!("skipping: TrailTracker binary not found");
+    fn analyze_runs_configured_analyzer_when_available() {
+        let Some(bin) = analyzer_bin() else {
+            eprintln!("skipping: ONTOLOOM_ANALYZER_BIN not set (or not a file)");
             return;
         };
-        let corpus = expand_tilde("~/geist/trailtracker/eval/corpus/calc");
+        let corpus = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/analyzer-corpus");
         if !corpus.is_dir() {
-            eprintln!("skipping: calc corpus not found at {}", corpus.display());
+            eprintln!("skipping: fixture corpus not found at {}", corpus.display());
             return;
         }
         let resp = route(

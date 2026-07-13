@@ -4,8 +4,8 @@ Ontoloom lets a domain expert draw what they know — classes, relationships,
 instances — and export it as a real ontology, without a server, a framework,
 or an internet connection.
 
-**Origin**: built 2026-06-30 in one push as the visual counterpart to
-TrailTracker: graphs need eyes and hands, not just emitters.
+**Origin**: built 2026-06-30 in one push: graphs need eyes and hands, not
+just emitters.
 
 **Non-negotiables** (these ARE the product):
 - `Cargo.toml` `[dependencies]` stays empty; frontend is vanilla JS, no build

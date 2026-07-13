@@ -940,7 +940,7 @@ mod tests {
         assert_eq!(back.name, "Patient Intake");
     }
 
-    /// The code-map load path: a TrailTracker hierarchy export (Ontoloom-wire
+    /// The code-map load path: an analyzer hierarchy export (Ontoloom-wire
     /// JSON with `view:"hierarchy"`, `level`, seed x/y, CONTAINS tree edges
     /// and DEPENDS_ON coupling edges) must survive the import → wire → model
     /// round trip untouched, because the browser's code map drills exactly

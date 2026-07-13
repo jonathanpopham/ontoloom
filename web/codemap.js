@@ -1,5 +1,5 @@
 /*
- * Ontoloom code map — a lazy drill-down viewer for TrailTracker-style
+ * Ontoloom code map — a lazy drill-down viewer for analyzer-style
  * hierarchy graphs (gs-H5 big-graph rendering + gs-H2 lazy click-to-expand).
  *
  * A hierarchy graph marks every node with properties.view === "hierarchy" and
@@ -206,7 +206,7 @@
     root = tnode("root", name || "Code map", null, 0);
 
     // Infrastructure groups (properties.kind === "infrastructure": the named
-    // homes TrailTracker gives scaffold/docs/generated/root files — Build &
+    // homes the analyzer gives scaffold/docs/generated/root files — Build &
     // Tooling, Documentation, Generated, Repo root, each with a `reason`)
     // render muted and sink below the business domains, so the colored
     // circles remain the story of what the software DOES. Click one and it
@@ -1045,7 +1045,7 @@
    * (Presentation → Infrastructure → Application → Domain). An edge whose
    * source layer is deeper than its target's points OUTWARD — the
    * architecture smell the layers lens exists to expose. Layers live on
-   * the wire nodes' `layer` property (TrailTracker stamps units/files);
+   * the wire nodes' `layer` property (analyzers stamp units/files);
    * unranked or missing layers never flag. */
   const LAYER_RANK = { Domain: 0, Application: 1, Infrastructure: 2, Presentation: 3 };
   function depViolates(aReal, bReal) {
@@ -1246,7 +1246,7 @@
     // Entities: every layer seen on a wire node, canonical ranks first
     // (Domain, Application, Infrastructure, Presentation), the rest
     // alphabetical after them. Counts aggregate every DEPENDS_ON whose
-    // both endpoints carry a layer (units, in TrailTracker graphs).
+    // both endpoints carry a layer (units, in analyzer graphs).
     const seen = new Set();
     for (const id in realById) {
       const l = prop(realById[id], "layer");

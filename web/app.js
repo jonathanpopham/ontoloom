@@ -385,7 +385,7 @@ function select(kind, id) {
 /* ======================================================================
  * Code map mode (gs-H5 big-graph rendering + gs-H2 lazy expand)
  *
- * When the loaded graph is a TrailTracker-style code hierarchy (nodes carry
+ * When the loaded graph is an analyzer-style code hierarchy (nodes carry
  * properties.view === "hierarchy" plus a domain/unit/file/symbol level and
  * CONTAINS edges), a "Code map" toggle appears and the drill-down viewer in
  * codemap.js takes over rendering. The manual editor is untouched: the same
@@ -1118,8 +1118,8 @@ exportMenu.querySelectorAll("button").forEach((b) => {
 document.addEventListener("click", closeMenus);
 
 /* ---- Analyze a repository (gs-H4) ----
- * POSTs a local path to /api/analyze; the Rust server shells to the local
- * TrailTracker binary and returns the repo as a hierarchy graph, which
+ * POSTs a local path to /api/analyze; the Rust server shells to the locally
+ * configured analyzer binary and returns the repo as a hierarchy graph, which
  * loadGraph() then auto-opens in code-map mode. Loopback-only, airgapped —
  * the analyzer is a local executable and nothing leaves the machine. */
 const analyzeBtn = document.getElementById("btn-analyze");
@@ -1169,7 +1169,7 @@ async function runAnalyze() {
   analyzeGo.classList.add("busy");
   analyzeGo.setAttribute("aria-busy", "true");
   analyzeGo.textContent = "Analyzing…";
-  setStatus("Analyzing " + path + " — running TrailTracker locally…");
+  setStatus("Analyzing " + path + " — running the analyzer locally…");
   try {
     const res = await fetch("/api/analyze", {
       method: "POST",

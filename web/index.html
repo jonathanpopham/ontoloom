@@ -31,6 +31,7 @@
       <button id="btn-mode" class="tool hidden" title="Switch between the code map and the manual editor"><span aria-hidden="true">⌗</span> Code map</button>
       <button id="btn-add" class="tool" title="Add an idea (or double-click the canvas)"><span aria-hidden="true">＋</span> Add idea</button>
       <button id="btn-connect" class="tool" title="Connect two ideas" aria-pressed="false"><span aria-hidden="true">⤳</span> Connect</button>
+      <button id="btn-arrange" class="tool" title="Automatically lay out every idea so nothing overlaps (same input, same layout)"><span aria-hidden="true">✻</span> Arrange</button>
       <button id="btn-delete" class="tool" title="Delete selected (Delete key)"><span aria-hidden="true">🗑</span> Delete</button>
       <span class="divider" role="separator" aria-orientation="vertical"></span>
       <button id="btn-save" class="tool" title="Save to disk"><span aria-hidden="true">💾</span> Save</button>
@@ -78,6 +79,16 @@
         <g id="nodes-layer"></g>
       </g>
     </svg>
+
+    <!-- Empty-state hint: floats over the canvas until the first idea exists.
+         pointer-events: none, so the double-click it describes passes through. -->
+    <div id="canvas-empty" class="canvas-empty hidden" aria-hidden="true">
+      <div class="canvas-empty-card">
+        <span class="glyph">◌</span>
+        <strong>An empty loom</strong>
+        <span>Double-click anywhere to add your first idea,<br />or use <em>＋ Add idea</em> above.</span>
+      </div>
+    </div>
 
     <aside id="inspector" class="inspector empty" aria-label="Selection inspector">
       <div class="inspector-empty-msg">

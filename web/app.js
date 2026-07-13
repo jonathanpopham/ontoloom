@@ -68,6 +68,198 @@ function colorForLabel(label) {
   return PALETTE[Math.abs(hash) % PALETTE.length];
 }
 
+// Per-node label color: pick whichever of near-black / near-white contrasts
+// better with the circle fill (WCAG relative luminance). Keeps captions
+// readable on the whole palette in both color schemes.
+function bestTextOn(hexFill) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hexFill || "");
+  if (!m) return "#f2f5fb";
+  const int = parseInt(m[1], 16);
+  const lin = (v) => {
+    v /= 255;
+    return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  };
+  const L =
+    0.2126 * lin((int >> 16) & 255) +
+    0.7152 * lin((int >> 8) & 255) +
+    0.0722 * lin(int & 255);
+  // Contrast of the fill against #0d1524 (L≈0.006) vs #f2f5fb (L≈0.90).
+  const vsDark = (L + 0.05) / 0.056;
+  const vsLight = 0.95 / (L + 0.05);
+  return vsDark >= vsLight ? "#0d1524" : "#f2f5fb";
+}
+
+// Wrap a caption to at most two short lines so it stays inside its node
+// instead of colliding with neighbors; overflow gets an ellipsis and the
+// full text lives in a native <title> tooltip.
+const CAPTION_LINE_CHARS = 12;
+function captionLines(caption) {
+  const text = String(caption || "").trim();
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines = [];
+  let cur = "";
+  for (const w of words) {
+    if (lines.length === 2) break;
+    const cand = cur ? cur + " " + w : w;
+    if (cand.length <= CAPTION_LINE_CHARS) {
+      cur = cand;
+      continue;
+    }
+    if (cur) {
+      lines.push(cur);
+      cur = w;
+    } else {
+      lines.push(w); // single word longer than a line — truncated below
+      cur = "";
+    }
+  }
+  if (cur && lines.length < 2) lines.push(cur);
+  const shown = lines
+    .slice(0, 2)
+    .map((l) => (l.length > CAPTION_LINE_CHARS ? l.slice(0, CAPTION_LINE_CHARS - 1) + "…" : l));
+  // Anything left over (or trimmed) is flagged with a trailing ellipsis.
+  if (shown.join(" ").replace(/…/g, "") !== text && shown.length) {
+    const last = shown[shown.length - 1];
+    if (!last.endsWith("…")) {
+      shown[shown.length - 1] =
+        (last.length >= CAPTION_LINE_CHARS ? last.slice(0, CAPTION_LINE_CHARS - 1) : last) + "…";
+    }
+  }
+  return shown;
+}
+
+/* ---- Overlap-free placement ----------------------------------------
+ * MIN_SEP is the center-to-center distance below which two nodes start
+ * eating each other's labels: 2×NODE_R for the circles plus room for the
+ * caption and the :Label line underneath. Everything here is deterministic
+ * — same graph in, same layout out. */
+const MIN_SEP = 104;
+
+// Deterministic spiral probe: the first free spot at (or near) a requested
+// point. Repeatedly pressing "Add idea" fans new nodes out instead of
+// stacking them invisibly on top of one another.
+function freeSpot(x, y) {
+  const collides = (X, Y) => state.nodes.some((n) => Math.hypot(n.x - X, n.y - Y) < MIN_SEP);
+  if (!collides(x, y)) return { x, y };
+  for (let ring = 1; ring <= 32; ring++) {
+    const r = ring * MIN_SEP * 0.8;
+    const steps = 6 * ring;
+    for (let s = 0; s < steps; s++) {
+      const a = (s / steps) * 2 * Math.PI;
+      const X = x + r * Math.cos(a);
+      const Y = y + r * Math.sin(a);
+      if (!collides(X, Y)) return { x: X, y: Y };
+    }
+  }
+  return { x, y };
+}
+
+// Pairwise separation: push any two nodes apart until every pair clears
+// MIN_SEP. O(n²) per pass, so it only runs on force-laid graphs (≤ the
+// force-layout cap); the phyllotaxis fallback is spaced by construction.
+function separatePositions(px, py, n) {
+  for (let pass = 0; pass < 24; pass++) {
+    let crowded = false;
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        let dx = px[j] - px[i];
+        let dy = py[j] - py[i];
+        let d = Math.hypot(dx, dy);
+        if (d >= MIN_SEP) continue;
+        if (d < 0.01) {
+          // Coincident pair: split along a deterministic per-pair angle.
+          const a = (((i * 2654435761 + j * 40503) >>> 0) % 360) * (Math.PI / 180);
+          dx = Math.cos(a);
+          dy = Math.sin(a);
+          d = 1;
+        }
+        const push = (MIN_SEP - d) / 2 / d;
+        px[i] -= dx * push;
+        py[i] -= dy * push;
+        px[j] += dx * push;
+        py[j] += dy * push;
+        crowded = true;
+      }
+    }
+    if (!crowded) break;
+  }
+}
+
+// Deterministic auto-layout: a seeded Fruchterman–Reingold pass pulls
+// connected ideas together and pushes strangers apart, then the separation
+// pass guarantees nothing overlaps. Beyond FORCE_CAP nodes the O(n²) physics
+// would stall the tab, so large graphs take a phyllotaxis spiral instead —
+// evenly spaced by construction, still deterministic.
+const FORCE_CAP = 400;
+function autoLayout(nodes, rels) {
+  const n = nodes.length;
+  if (!n) return;
+  const index = new Map(nodes.map((nd, i) => [nd.id, i]));
+  const edges = [];
+  for (const r of rels) {
+    const a = index.get(r.from);
+    const b = index.get(r.to);
+    if (a !== undefined && b !== undefined && a !== b) edges.push([a, b]);
+  }
+  const GOLDEN = Math.PI * (3 - Math.sqrt(5));
+  const px = new Float64Array(n);
+  const py = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const r = MIN_SEP * Math.sqrt(i + 0.5);
+    px[i] = r * Math.cos(i * GOLDEN);
+    py[i] = r * Math.sin(i * GOLDEN);
+  }
+  if (n <= FORCE_CAP) {
+    const k = MIN_SEP * 1.45; // ideal edge length
+    let temp = k * Math.max(2, Math.sqrt(n) / 2);
+    const dx = new Float64Array(n);
+    const dy = new Float64Array(n);
+    for (let it = 0; it < 120; it++) {
+      dx.fill(0);
+      dy.fill(0);
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          let ddx = px[i] - px[j];
+          let ddy = py[i] - py[j];
+          let d2 = ddx * ddx + ddy * ddy;
+          if (d2 < 0.01) {
+            ddx = 0.1;
+            ddy = 0.1;
+            d2 = 0.02;
+          }
+          const f = (k * k) / d2; // repulsion / distance
+          dx[i] += ddx * f;
+          dy[i] += ddy * f;
+          dx[j] -= ddx * f;
+          dy[j] -= ddy * f;
+        }
+      }
+      for (const [a, b] of edges) {
+        const ddx = px[a] - px[b];
+        const ddy = py[a] - py[b];
+        const d = Math.hypot(ddx, ddy) || 0.1;
+        const f = d / k; // attraction / distance
+        dx[a] -= ddx * f;
+        dy[a] -= ddy * f;
+        dx[b] += ddx * f;
+        dy[b] += ddy * f;
+      }
+      for (let i = 0; i < n; i++) {
+        const d = Math.hypot(dx[i], dy[i]) || 1;
+        const step = Math.min(d, temp);
+        px[i] += (dx[i] / d) * step;
+        py[i] += (dy[i] / d) * step;
+      }
+      temp = Math.max(temp * 0.94, 1);
+    }
+    separatePositions(px, py, n);
+  }
+  nodes.forEach((nd, i) => {
+    nd.x = Math.round(px[i]);
+    nd.y = Math.round(py[i]);
+  });
+}
+
 function nodeById(id) {
   return state.nodes.find((n) => n.id === id);
 }
@@ -129,13 +321,15 @@ function applyView() {
  * ==================================================================== */
 function addNode(worldX, worldY) {
   const id = nextNodeId();
+  // Never drop a new idea on top of an existing one — nudge to a free spot.
+  const spot = freeSpot(worldX, worldY);
   const node = {
     id,
     labels: [],
     caption: "Idea " + state.nodes.length,
     properties: {},
-    x: worldX,
-    y: worldY,
+    x: spot.x,
+    y: spot.y,
   };
   state.nodes.push(node);
   select("node", id);
@@ -276,6 +470,8 @@ function render() {
   // DOM — that is what keeps a 20k-node repo from ever drawing as a
   // hairball. The editor is rebuilt on demand when switching back.
   if (isCodeMapActive()) return;
+  document.getElementById("canvas-empty").classList.toggle("hidden", state.nodes.length > 0);
+  if (!state.connectSource) clearTempEdge();
   applyView();
   renderEdges();
   renderNodes();
@@ -293,11 +489,24 @@ function renderNodes() {
 
     g.appendChild(el("circle", { class: "node-circle", r: NODE_R, fill }));
 
+    // Caption: up to two short lines that stay on the node, colored for
+    // contrast against this node's fill. The full text rides in a native
+    // <title> tooltip so truncation never hides information.
     const caption = node.caption || node.id;
-    g.appendChild(text(caption, { class: "node-label", y: 5 }));
+    const lines = captionLines(caption);
+    const labelFill = bestTextOn(fill);
+    const ys = lines.length > 1 ? [-3, 11] : [4];
+    lines.forEach((line, i) => {
+      const t = text(line, { class: "node-label", y: ys[i] });
+      t.style.fill = labelFill;
+      g.appendChild(t);
+    });
     if (node.labels.length) {
       g.appendChild(text(":" + node.labels.join(":"), { class: "node-sublabel", y: NODE_R + 14 }));
     }
+    const tip = el("title");
+    tip.textContent = node.labels.length ? caption + "  ·  :" + node.labels.join(":") : caption;
+    g.appendChild(tip);
 
     bindNodeEvents(g, node);
     nodesLayer.appendChild(g);
@@ -337,7 +546,7 @@ function renderEdges() {
     }));
     g.appendChild(text(label, { class: "edge-label", x: mx, y: my + 3 }));
 
-    g.addEventListener("mousedown", (e) => {
+    g.addEventListener("pointerdown", (e) => {
       e.stopPropagation();
       select("edge", rel.id);
     });
@@ -363,7 +572,10 @@ function edgeGeometry(a, b) {
  * Node interaction (drag / click / connect)
  * ==================================================================== */
 function bindNodeEvents(g, node) {
-  g.addEventListener("mousedown", (e) => {
+  // Pointer events (not mouse events) so dragging works with a finger or a
+  // stylus too — the canvas sets touch-action: none to keep the page still.
+  g.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
     e.stopPropagation();
     if (state.mode === "connect") {
       handleConnectClick(node);
@@ -400,22 +612,57 @@ function startNodeDrag(e, node, g) {
     renderEdges(); // edges follow the moving node
   }
   function onUp() {
-    window.removeEventListener("mousemove", onMove);
-    window.removeEventListener("mouseup", onUp);
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
     if (!moved) {
       select("node", node.id);
     } else {
       scheduleSave();
     }
   }
-  window.addEventListener("mousemove", onMove);
-  window.addEventListener("mouseup", onUp);
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+  window.addEventListener("pointercancel", onUp);
 }
 
 /* ======================================================================
  * Canvas interaction (pan / add / deselect)
  * ==================================================================== */
+/* While connecting, a dashed preview edge follows the pointer from the
+ * chosen source so the gesture in progress is always visible. It lives
+ * directly on the viewport (not in edges-layer) so renderEdges() can
+ * rebuild real edges without touching it. */
 let tempEdge = null;
+
+function updateTempEdge(worldX, worldY) {
+  const src = nodeById(state.connectSource);
+  if (!src) {
+    clearTempEdge();
+    return;
+  }
+  if (!tempEdge) {
+    tempEdge = el("line", { class: "temp-edge" });
+    viewport.appendChild(tempEdge);
+  }
+  tempEdge.setAttribute("x1", src.x);
+  tempEdge.setAttribute("y1", src.y);
+  tempEdge.setAttribute("x2", worldX);
+  tempEdge.setAttribute("y2", worldY);
+}
+
+function clearTempEdge() {
+  if (tempEdge) {
+    tempEdge.remove();
+    tempEdge = null;
+  }
+}
+
+svg.addEventListener("pointermove", (e) => {
+  if (state.mode !== "connect" || !state.connectSource) return;
+  const p = screenToWorld(e.clientX, e.clientY);
+  updateTempEdge(p.x, p.y);
+});
 
 svg.addEventListener("dblclick", (e) => {
   if (e.target.closest(".node") || e.target.closest(".edge")) return;
@@ -423,7 +670,8 @@ svg.addEventListener("dblclick", (e) => {
   addNode(p.x, p.y);
 });
 
-svg.addEventListener("mousedown", (e) => {
+svg.addEventListener("pointerdown", (e) => {
+  if (e.pointerType === "mouse" && e.button !== 0) return;
   if (e.target.closest(".node") || e.target.closest(".edge")) return;
   if (state.mode === "connect") {
     // Clicking empty space cancels an in-progress connection.
@@ -442,11 +690,13 @@ svg.addEventListener("mousedown", (e) => {
     applyView();
   }
   function onUp() {
-    window.removeEventListener("mousemove", onMove);
-    window.removeEventListener("mouseup", onUp);
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
   }
-  window.addEventListener("mousemove", onMove);
-  window.addEventListener("mouseup", onUp);
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+  window.addEventListener("pointercancel", onUp);
 });
 
 svg.addEventListener("wheel", (e) => {
@@ -688,19 +938,6 @@ function loadGraph(data) {
     x: typeof n.x === "number" ? n.x : null,
     y: typeof n.y === "number" ? n.y : null,
   }));
-  // Imports from JSONL / Cypher / GraphML carry no coordinates — lay those
-  // nodes out on a tidy grid so nothing overlaps.
-  const placed = state.nodes.filter((n) => n.x === null);
-  if (placed.length) {
-    const cols = Math.ceil(Math.sqrt(placed.length)) || 1;
-    const spacing = 180;
-    const ox = 140;
-    const oy = 120;
-    placed.forEach((n, i) => {
-      n.x = ox + (i % cols) * spacing;
-      n.y = oy + Math.floor(i / cols) * spacing;
-    });
-  }
   state.rels = (data.relationships || []).map((r) => ({
     id: r.id,
     type: r.type || "RELATED_TO",
@@ -708,6 +945,24 @@ function loadGraph(data) {
     to: r.to,
     properties: r.properties && typeof r.properties === "object" ? r.properties : {},
   }));
+  // Imports from JSONL / Cypher / GraphML carry no coordinates. When the
+  // whole graph is unplaced, run the deterministic auto-layout so connected
+  // ideas land near each other and nothing overlaps; when only some nodes
+  // are new, grid them below the existing content instead of on top of it.
+  const unplaced = state.nodes.filter((n) => n.x === null);
+  if (unplaced.length === state.nodes.length) {
+    autoLayout(state.nodes, state.rels);
+  } else if (unplaced.length) {
+    const cols = Math.ceil(Math.sqrt(unplaced.length)) || 1;
+    const spacing = Math.max(MIN_SEP, 180);
+    const anchored = state.nodes.filter((n) => n.x !== null);
+    const ox = Math.min(...anchored.map((n) => n.x), 140);
+    const oy = Math.max(...anchored.map((n) => n.y)) + spacing;
+    unplaced.forEach((n, i) => {
+      n.x = ox + (i % cols) * spacing;
+      n.y = oy + Math.floor(i / cols) * spacing;
+    });
+  }
   // Advance the id counters past anything we just loaded.
   state.nodeSeq = maxSeq(state.nodes.map((n) => n.id), "n");
   state.relSeq = maxSeq(state.rels.map((r) => r.id), "r");
@@ -717,6 +972,9 @@ function loadGraph(data) {
   // editor. Must run before render() so a huge import never builds the full
   // editor DOM first.
   updateCodeMapMode(true);
+  // Freshly laid-out graphs may sit anywhere in world space — bring the
+  // whole thing into view before first paint of the editor.
+  if (!isCodeMapActive()) fitEditorView();
   render();
 }
 
@@ -813,6 +1071,18 @@ connectBtn.addEventListener("click", () => {
       : "Ready."
   );
   render();
+});
+
+document.getElementById("btn-arrange").addEventListener("click", () => {
+  if (!state.nodes.length) {
+    toast("Nothing to arrange yet — add an idea first.");
+    return;
+  }
+  autoLayout(state.nodes, state.rels);
+  fitEditorView();
+  render();
+  scheduleSave();
+  setStatus("Arranged " + state.nodes.length + (state.nodes.length === 1 ? " idea." : " ideas."));
 });
 
 document.getElementById("btn-delete").addEventListener("click", deleteSelection);

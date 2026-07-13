@@ -325,6 +325,7 @@ body {
   flex: 1 1 auto;
   display: flex;
   min-height: 0;
+  position: relative; /* anchors the canvas empty-state overlay */
 }
 .canvas {
   flex: 1 1 auto;
@@ -332,8 +333,39 @@ body {
   background-size: 26px 26px;
   background-color: var(--bg);
   cursor: default;
+  touch-action: none; /* pointer events own the surface: touch drags nodes, not the page */
 }
 .canvas.connecting { cursor: crosshair; }
+
+/* Empty canvas: an invitation, not a blank void. pointer-events: none keeps
+   the double-click it describes working right through it. */
+.canvas-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.canvas-empty.hidden { display: none; }
+.canvas-empty-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  padding: 26px 34px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel); /* fallback when color-mix is unavailable */
+  background: color-mix(in srgb, var(--bg-panel) 72%, transparent);
+}
+.canvas-empty-card .glyph { font-size: 26px; opacity: 0.7; }
+.canvas-empty-card strong { color: var(--text-dim); font-size: var(--fs-base); }
+.canvas-empty-card em { font-style: normal; color: var(--text-dim); }
 
 /* ---- Editor nodes & edges (SVG) ---- */
 .node { cursor: grab; }
@@ -351,20 +383,26 @@ body {
 }
 .node.connect-source .node-circle { stroke: var(--good); stroke-width: 3; }
 .node-label {
-  fill: var(--text);
-  font-size: 13px;
+  fill: var(--text); /* fallback — render sets a per-fill contrast color inline */
+  font-size: 12px;
+  font-weight: 500;
   font-family: var(--sans);
   text-anchor: middle;
   pointer-events: none;
   user-select: none;
 }
 .node-sublabel {
-  fill: var(--text-faint);
+  fill: var(--text-dim);
   font-size: 10px;
   font-family: var(--mono);
   text-anchor: middle;
   pointer-events: none;
   user-select: none;
+  /* Halo: keeps the :Label line legible when an edge runs underneath it. */
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
 }
 
 .edge-line { stroke: var(--edge); stroke-width: 2; fill: none; }
@@ -537,6 +575,7 @@ body {
 /* The manual-editing tools make no sense while viewing a code map. */
 body.codemap-mode #btn-add,
 body.codemap-mode #btn-connect,
+body.codemap-mode #btn-arrange,
 body.codemap-mode #btn-delete,
 body.codemap-mode #btn-clear { display: none; }
 
@@ -1103,4 +1142,50 @@ body.codemap-mode #btn-clear { display: none; }
   .inspector, .cm-detail { flex-basis: 240px; }
   #cm-search { width: 150px; }
   .cm-legend { display: none; } /* the tour + inspector carry the same info */
+}
+
+/* ---- Phones: the canvas keeps the screen, panels become bottom sheets ----
+ * Side-by-side panes don't survive a phone width; the workspace stacks and
+ * the inspector slides under the graph instead of beside it. The topbar
+ * drops its wordmark (the favicon carries the brand) so the title and tools
+ * can breathe. */
+@media (max-width: 700px) {
+  .topbar { gap: 8px; padding: 8px 10px; flex-wrap: wrap; }
+  .brand-name { display: none; }
+  .doc-title { min-width: 0; flex: 1 1 110px; max-width: none; }
+  .toolbar { gap: 4px; }
+  .tool { padding: 6px 9px; }
+  .divider { display: none; }
+
+  .workspace { flex-direction: column; }
+  .inspector, .cm-detail {
+    flex: 0 0 auto;
+    max-height: 46%;
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+  .cm-detail.empty { max-height: none; padding: 10px 16px; }
+
+  /* Dropdowns anchor to the right edge and never overflow the viewport. */
+  .menu {
+    left: auto;
+    right: 0;
+    max-width: calc(100vw - 20px);
+  }
+  .analyze-menu { min-width: min(340px, calc(100vw - 20px)); }
+
+  .canvas-empty-card { margin: 0 16px; padding: 20px 22px; }
+  .status-bar { padding: 6px 10px; }
+}
+
+/* ---- Touch: fingers need bigger targets than cursors ---- */
+@media (pointer: coarse) {
+  .tool { min-height: 42px; padding: 8px 13px; }
+  .menu button { min-height: 42px; }
+  .cm-levels button { min-height: 36px; }
+  .prop-remove { width: 40px; height: 40px; }
+  .prop-add { min-height: 40px; }
+  .inspector-delete { min-height: 42px; }
+  .edge-hit { stroke-width: 26; } /* edges stay tappable */
+  #cm-phys { width: 120px; }
 }
